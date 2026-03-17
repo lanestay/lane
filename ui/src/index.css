@@ -1,0 +1,215 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --radius-2xl: calc(var(--radius) + 8px);
+    --radius-3xl: calc(var(--radius) + 12px);
+    --radius-4xl: calc(var(--radius) + 16px);
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-4: var(--chart-4);
+    --color-chart-5: var(--chart-5);
+    --color-sidebar: var(--sidebar);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+    --radius: 0.625rem;
+    --background: #f5f2ea;
+    --foreground: #172033;
+    --card: #fffdf8;
+    --card-foreground: #172033;
+    --popover: #fffdf8;
+    --popover-foreground: #172033;
+    --primary: #0f6d75;
+    --primary-foreground: #f8fbfb;
+    --secondary: #e6eee9;
+    --secondary-foreground: #1d3541;
+    --muted: #ebe4d7;
+    --muted-foreground: #64717a;
+    --accent: #dcecf1;
+    --accent-foreground: #17303a;
+    --destructive: #c4543f;
+    --border: #d7dfdf;
+    --input: #d6dedd;
+    --ring: #7caab0;
+    --chart-1: #0f6d75;
+    --chart-2: #2f8f92;
+    --chart-3: #d58f37;
+    --chart-4: #7a9c61;
+    --chart-5: #b96556;
+    --sidebar: #182534;
+    --sidebar-foreground: #eef4f4;
+    --sidebar-primary: #8ecfd3;
+    --sidebar-primary-foreground: #13202d;
+    --sidebar-accent: #263849;
+    --sidebar-accent-foreground: #eef4f4;
+    --sidebar-border: rgba(255, 255, 255, 0.1);
+    --sidebar-ring: #91c2c6;
+}
+
+.dark {
+    --background: #0f1723;
+    --foreground: #edf3f4;
+    --card: #18212f;
+    --card-foreground: #edf3f4;
+    --popover: #18212f;
+    --popover-foreground: #edf3f4;
+    --primary: #8ecfd3;
+    --primary-foreground: #13202d;
+    --secondary: #223041;
+    --secondary-foreground: #edf3f4;
+    --muted: #223041;
+    --muted-foreground: #9db0ba;
+    --accent: #243544;
+    --accent-foreground: #edf3f4;
+    --destructive: #da745d;
+    --border: rgba(255, 255, 255, 0.1);
+    --input: rgba(255, 255, 255, 0.12);
+    --ring: #8ecfd3;
+    --chart-1: #8ecfd3;
+    --chart-2: #4fb5bd;
+    --chart-3: #f2b765;
+    --chart-4: #9bc77c;
+    --chart-5: #ee8b77;
+    --sidebar: #121b28;
+    --sidebar-foreground: #edf3f4;
+    --sidebar-primary: #8ecfd3;
+    --sidebar-primary-foreground: #13202d;
+    --sidebar-accent: #223041;
+    --sidebar-accent-foreground: #edf3f4;
+    --sidebar-border: rgba(255, 255, 255, 0.1);
+    --sidebar-ring: #8ecfd3;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    min-height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    min-height: 100vh;
+    font-family: "Avenir Next", "Segoe UI Variable Text", "Aptos", "Trebuchet MS", sans-serif;
+    background-image:
+      radial-gradient(circle at top left, rgba(15, 109, 117, 0.16), transparent 26%),
+      radial-gradient(circle at 85% 12%, rgba(213, 143, 55, 0.12), transparent 18%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
+  }
+  .dark body {
+    background-image:
+      radial-gradient(circle at top left, rgba(15, 109, 117, 0.10), transparent 26%),
+      radial-gradient(circle at 85% 12%, rgba(213, 143, 55, 0.06), transparent 18%),
+      linear-gradient(180deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0));
+  }
+  #root {
+    min-height: 100vh;
+  }
+  pre,
+  code,
+  .font-mono {
+    font-family: "Berkeley Mono", "SFMono-Regular", "JetBrains Mono", monospace;
+  }
+  ::selection {
+    background: rgba(15, 109, 117, 0.2);
+  }
+}
+
+@layer components {
+  .app-shell {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .app-shell::before,
+  .app-shell::after {
+    content: "";
+    pointer-events: none;
+    position: fixed;
+    inset: auto;
+    z-index: -1;
+    border-radius: 9999px;
+    filter: blur(72px);
+    opacity: 0.75;
+  }
+
+  .app-shell::before {
+    top: 2rem;
+    left: 4rem;
+    width: 16rem;
+    height: 16rem;
+    background: rgba(15, 109, 117, 0.12);
+  }
+
+  .app-shell::after {
+    right: 6rem;
+    bottom: 3rem;
+    width: 18rem;
+    height: 18rem;
+    background: rgba(213, 143, 55, 0.1);
+  }
+
+  .app-sidebar-panel {
+    background:
+      radial-gradient(circle at top, rgba(142, 207, 211, 0.1), transparent 34%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+      var(--sidebar);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 28px 80px rgba(15, 23, 42, 0.22);
+    backdrop-filter: blur(24px);
+  }
+
+  .app-panel {
+    background: rgba(255, 253, 248, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    box-shadow: 0 18px 44px rgba(15, 23, 42, 0.08);
+    backdrop-filter: blur(22px);
+  }
+
+  .dark .app-panel {
+    background: rgba(24, 33, 47, 0.76);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  /* Recharts legend items — remove grey hover background, keep text readable */
+  .recharts-legend-item {
+    cursor: default !important;
+  }
+  .recharts-legend-item:hover {
+    background-color: transparent !important;
+  }
+}

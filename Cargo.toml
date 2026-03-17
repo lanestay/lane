@@ -1,0 +1,110 @@
+[package]
+name = "lane"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["Thomas Brown"]
+description = "Self-contained database query platform with REST API, MCP, and admin console"
+
+[features]
+default = ["mssql", "mcp", "xlsx"]
+mssql = ["tiberius", "native-tls", "async-native-tls"]
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:postgres-native-tls"]
+mcp = ["rmcp"]
+xlsx = ["rust_xlsxwriter"]
+duckdb_backend = ["duckdb"]
+storage = ["rust-s3"]
+webui = ["dep:rust-embed", "dep:mime_guess"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat", "io", "rt"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP server
+axum = { version = "0.8", features = ["multipart"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+bytes = "1.5"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling & logging
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Data types
+chrono = "0.4"
+rust_decimal = "1.36"
+uuid = { version = "1.10", features = ["v4"] }
+regex = "1"
+base64 = "0.22"
+hex = "0.4"
+sha2 = "0.10"
+once_cell = "1"
+dotenv = "0.15"
+csv = "1"
+calamine = { version = "0.26", features = ["dates"] }
+
+# MSSQL
+tiberius = { version = "0.12", features = ["tds73", "sql-browser-tokio", "native-tls", "chrono", "rust_decimal"], optional = true }
+native-tls = { version = "0.2", optional = true }
+async-native-tls = { version = "0.5", optional = true }
+
+# Postgres
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"], optional = true }
+deadpool-postgres = { version = "0.14", optional = true }
+postgres-native-tls = { version = "0.5", optional = true }
+
+# Connection pool
+bb8 = "0.9"
+
+# Auth (SQLCipher + Argon2)
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }
+argon2 = { version = "0.5", features = ["std"] }
+
+# MCP
+rmcp = { version = "0.14.0", features = ["server", "macros", "transport-streamable-http-server", "transport-io", "schemars"], optional = true }
+schemars = "1.0"
+
+# Export
+rust_xlsxwriter = { version = "0.79", optional = true }
+
+# DuckDB (workspace backend)
+duckdb = { version = "=1.1.1", features = ["bundled"], optional = true }
+
+# HTTP client (webhooks)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# OAuth2 (PKCE + token exchange)
+oauth2 = "5"
+url = "2"
+
+# SMTP (email code login)
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+
+
+# S3/MinIO storage
+rust-s3 = { version = "0.35", default-features = false, features = ["tokio-rustls-tls"], optional = true }
+
+# Web UI embed
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

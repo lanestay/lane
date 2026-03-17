@@ -1,0 +1,39 @@
+services:
+  lane:
+    build: .
+    ports:
+      # Bind address controls WHO can reach lane on the host machine:
+      #
+      #   127.0.0.1  — localhost only (default, recommended)
+      #               Only processes on this machine can connect. Use this unless
+      #               you have a reverse proxy or need LAN access.
+      #
+      #   0.0.0.0    — all interfaces
+      #               Any device on your network (or the internet, if port-forwarded)
+      #               can reach lane. Only use this if you understand the
+      #               exposure and have authentication configured.
+      #
+      # Override with:  LANE_BIND=0.0.0.0 docker compose up
+      - "${LANE_BIND:-127.0.0.1}:3401:3401"
+    volumes:
+      - lane-data:/app/data
+    environment:
+      - LANE_DATA_DIR=/app/data
+      - LANE_AUTH=${LANE_AUTH:-}
+      - LANE_BASE_URL=${LANE_BASE_URL:-}
+      - LANE_GOOGLE_CLIENT_ID=${LANE_GOOGLE_CLIENT_ID:-}
+      - LANE_GOOGLE_CLIENT_SECRET=${LANE_GOOGLE_CLIENT_SECRET:-}
+      - LANE_MICROSOFT_CLIENT_ID=${LANE_MICROSOFT_CLIENT_ID:-}
+      - LANE_MICROSOFT_CLIENT_SECRET=${LANE_MICROSOFT_CLIENT_SECRET:-}
+      - LANE_GITHUB_CLIENT_ID=${LANE_GITHUB_CLIENT_ID:-}
+      - LANE_GITHUB_CLIENT_SECRET=${LANE_GITHUB_CLIENT_SECRET:-}
+      # - LANE_LOG_LEVEL=info,lane=debug
+    networks:
+      - lane
+    restart: unless-stopped
+
+volumes:
+  lane-data:
+
+networks:
+  lane:

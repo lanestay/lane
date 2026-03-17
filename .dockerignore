@@ -1,0 +1,13 @@
+target/
+node_modules/
+data/
+.git/
+.claude/
+.playwright-mcp/
+dev_notes/
+ui/node_modules/
+ui/playwright-report/
+ui/test-results/
+ui/.auth/
+*.png
+*.log

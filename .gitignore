@@ -1,0 +1,51 @@
+.DS_Store
+
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# Build output
+dist/
+
+# Coverage and test reports
+coverage/
+*/coverage/
+*.lcov
+*.tsbuildinfo
+
+# IDE
+.vscode-test/
+
+# Environment files
+.env
+.env.*
+!.env.example
+*.env
+
+# Data directory (SQLCipher auth.db, cipher keys)
+data/
+
+# Security and sensitive files
+*.pem
+.mcp.json
+config.toml
+config.json
+
+# Test artifacts
+.playwright-mcp/
+e2e-screenshots/
+ui/playwright-report/
+ui/test-results/
+ui/.auth/
+results.csv
+
+# Dev notes
+plans.md
+CLAUDE.md
