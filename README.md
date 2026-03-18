@@ -204,7 +204,7 @@ Full documentation is in the [`docs/`](docs/index.md) directory:
 
 ## Contributing
 
-lane is a personal project. Pull requests from trusted collaborators are welcome — unsolicited PRs will generally be closed.
+lane is a personal project. Pull requests from trusted collaborators are welcome — unsolicited PRs will generally be closed at this early stage in development while the project takes shape.
 
 If you find a bug or security issue, please open an issue. You're welcome to fork and customize lane for your own use — the AGPL-3.0 license requires that any modifications distributed or made available over a network be released under the same license.
 
