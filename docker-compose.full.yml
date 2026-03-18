@@ -15,13 +15,21 @@ services:
       - lane-data:/app/data
     environment:
       - LANE_DATA_DIR=/app/data
-      # - LANE_LOG_LEVEL=info,lane=debug
+      - LANE_AUTH=${LANE_AUTH:-}
+      - LANE_BASE_URL=${LANE_BASE_URL:-}
+      - LANE_GOOGLE_CLIENT_ID=${LANE_GOOGLE_CLIENT_ID:-}
+      - LANE_GOOGLE_CLIENT_SECRET=${LANE_GOOGLE_CLIENT_SECRET:-}
+      - LANE_MICROSOFT_CLIENT_ID=${LANE_MICROSOFT_CLIENT_ID:-}
+      - LANE_MICROSOFT_CLIENT_SECRET=${LANE_MICROSOFT_CLIENT_SECRET:-}
+      - LANE_GITHUB_CLIENT_ID=${LANE_GITHUB_CLIENT_ID:-}
+      - LANE_GITHUB_CLIENT_SECRET=${LANE_GITHUB_CLIENT_SECRET:-}
       - LANE_SMTP_HOST=${LANE_SMTP_HOST:-}
       - LANE_SMTP_PORT=${LANE_SMTP_PORT:-}
       - LANE_SMTP_USERNAME=${LANE_SMTP_USERNAME:-}
       - LANE_SMTP_PASSWORD=${LANE_SMTP_PASSWORD:-}
       - LANE_SMTP_FROM=${LANE_SMTP_FROM:-}
       - LANE_SMTP_TLS=${LANE_SMTP_TLS:-}
+      # Use only to debug - LANE_LOG_LEVEL=info,lane=debug
     networks:
       - lane
     depends_on:
