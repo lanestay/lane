@@ -11,6 +11,62 @@ Self-contained database platform — query engine, REST API, MCP server, and Rea
 - **Control access** — four SQL permission tiers, per-table CRUD, per-connection restrictions, service accounts, PII detection/redaction, and teams.
 - **Stream changes** — SSE on any table, no polling, no external broker.
 
+## Zero to Hero Deploy - AKA Quickest Start
+
+Provision a server from your cloud/VPS provider of choice, then SSH in and run the following.
+
+### 1. Install Tailscale
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --ssh
+```
+
+### 2. Lock down the server with UFW
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow in on tailscale0
+sudo ufw enable
+sudo ufw reload
+sudo service ssh restart
+```
+
+All traffic now goes through your tailnet. No open ports.
+
+### 3. Install Docker
+
+```bash
+sudo apt update
+sudo apt install ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+### 4. Clone and run
+
+```bash
+sudo mkdir -p /var/services
+cd /var/services
+git clone https://github.com/lanestay/lane.git
+cd lane
+docker compose -f docker-compose.prebuilt.yml up -d
+```
+
+### 5. Serve over Tailscale
+
+```bash
+tailscale serve --bg 3401
+```
+
+Visit your Tailscale URL `/setup` to create your admin account. Databases and storage can be added through the UI — uncomment them in the compose file if you want them co-located.
+
 ## Quick Start
 
 ### Standalone

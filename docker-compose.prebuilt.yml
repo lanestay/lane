@@ -1,0 +1,104 @@
+# Pre-built image from Docker Hub
+#
+# Usage:
+#   1. docker compose -f docker-compose.prebuilt.yml up
+#   2. tailscale serve --bg 3401
+#   3. Visit your Tailscale URL /setup to configure your admin account
+#   4. Add connections through the UI or admin API
+
+services:
+  lane:
+    image: lanestay/lane:latest
+    ports:
+      - "${LANE_BIND:-127.0.0.1}:3401:3401"
+    volumes:
+      - lane-data:/app/data
+    environment:
+      - LANE_DATA_DIR=/app/data
+      - LANE_AUTH=${LANE_AUTH:-tailscale}
+      - LANE_BASE_URL=${LANE_BASE_URL:-}
+      # Uncomment to enable OIDC providers (add google/microsoft/github to LANE_AUTH)
+      # - LANE_GOOGLE_CLIENT_ID=
+      # - LANE_GOOGLE_CLIENT_SECRET=
+      # - LANE_MICROSOFT_CLIENT_ID=
+      # - LANE_MICROSOFT_CLIENT_SECRET=
+      # - LANE_GITHUB_CLIENT_ID=
+      # - LANE_GITHUB_CLIENT_SECRET=
+      # Uncomment to enable email code login (add email to LANE_AUTH)
+      # - LANE_SMTP_HOST=smtp.gmail.com
+      # - LANE_SMTP_PORT=587
+      # - LANE_SMTP_TLS=starttls
+      # - LANE_SMTP_FROM=noreply@yourdomain.com
+      # - LANE_SMTP_USERNAME=
+      # - LANE_SMTP_PASSWORD=
+      # - LANE_LOG_LEVEL=info,lane=debug
+    networks:
+      - lane
+    restart: unless-stopped
+
+  # Uncomment the databases and storage you need, then add them as
+  # connections through the Lane UI or admin API.
+
+  # mssql:
+  #   image: mcr.microsoft.com/mssql/server:2022-latest
+  #   environment:
+  #     ACCEPT_EULA: "Y"
+  #     MSSQL_SA_PASSWORD: "YourPassword123!"  # change this
+  #   ports:
+  #     - "127.0.0.1:1433:1433"
+  #   volumes:
+  #     - mssql-data:/var/opt/mssql
+  #   networks:
+  #     - lane
+  #   healthcheck:
+  #     test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -No -Q "SELECT 1" || exit 1
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 10
+  #     start_period: 30s
+
+  # postgres:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: "YourPassword123!"  # change this
+  #     POSTGRES_DB: postgres
+  #   ports:
+  #     - "127.0.0.1:5432:5432"
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - lane
+  #   healthcheck:
+  #     test: pg_isready -U postgres
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 5
+
+  # minio:
+  #   image: minio/minio
+  #   command: server /data --console-address ":9001"
+  #   environment:
+  #     MINIO_ROOT_USER: "minioadmin"          # change this
+  #     MINIO_ROOT_PASSWORD: "minioadmin"      # change this
+  #   ports:
+  #     - "127.0.0.1:9000:9000"    # S3 API
+  #     - "127.0.0.1:9001:9001"    # Console
+  #   volumes:
+  #     - minio-data:/data
+  #   networks:
+  #     - lane
+  #   healthcheck:
+  #     test: curl -f http://localhost:9000/minio/health/live || exit 1
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 5
+
+volumes:
+  lane-data:
+  # mssql-data:
+  # postgres-data:
+  # minio-data:
+
+networks:
+  lane:
