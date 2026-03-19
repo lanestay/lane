@@ -11,12 +11,36 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 use crate::auth::{self, AuthResult};
 use crate::auth::access_control::AccessControlDb;
 use super::AppState;
+
+/// Last time we checked for expired realtime tables (unix timestamp).
+static LAST_REALTIME_CLEANUP: AtomicI64 = AtomicI64::new(0);
+
+/// Auto-expire realtime tables after 1 hour when nobody is watching.
+const REALTIME_MAX_AGE_SECS: i64 = 3600;
+/// Only run the cleanup check once per minute.
+const REALTIME_CLEANUP_INTERVAL_SECS: i64 = 60;
+
+/// Remove expired realtime tables if enough time has passed since the last check.
+fn maybe_cleanup_expired_realtime(state: &AppState) {
+    let now = chrono::Utc::now().timestamp();
+    let last = LAST_REALTIME_CLEANUP.load(Ordering::Relaxed);
+    if now - last < REALTIME_CLEANUP_INTERVAL_SECS {
+        return;
+    }
+    if LAST_REALTIME_CLEANUP.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_err() {
+        return; // another thread got it
+    }
+    if let Some(ref access_db) = state.access_db {
+        let _ = access_db.cleanup_expired_realtime_tables(REALTIME_MAX_AGE_SECS);
+    }
+}
 
 // ============================================================================
 // Types
@@ -32,6 +56,8 @@ pub struct RealtimeEvent {
     pub row_count: Option<i64>,
     pub user: Option<String>,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +158,11 @@ pub fn try_emit_realtime_event_direct(
     row_count: Option<i64>,
     user_email: Option<&str>,
 ) {
+    if tx.receiver_count() == 0 {
+        // No easy access to AppState here, cleanup happens in other emit paths
+        return;
+    }
+
     let table = match extract_write_target_table(query) {
         Some(t) => t,
         None => return,
@@ -150,6 +181,7 @@ pub fn try_emit_realtime_event_direct(
         row_count,
         user: user_email.map(|s| s.to_string()),
         timestamp: chrono::Utc::now().to_rfc3339(),
+        data: None,
     };
 
     // Best-effort send — don't care if nobody is listening
@@ -167,6 +199,11 @@ pub fn emit_realtime_event(
     row_count: Option<i64>,
     user_email: Option<&str>,
 ) {
+    if state.realtime_tx.receiver_count() == 0 {
+        maybe_cleanup_expired_realtime(state);
+        return;
+    }
+
     let access_db = match state.access_db.as_ref() {
         Some(db) => db,
         None => return,
@@ -185,6 +222,48 @@ pub fn emit_realtime_event(
         row_count,
         user: user_email.map(|s| s.to_string()),
         timestamp: chrono::Utc::now().to_rfc3339(),
+        data: None,
+    };
+
+    let _ = state.realtime_tx.send(event);
+}
+
+/// Emit a realtime event with row data attached (for REST API CRUD handlers).
+/// Skips all work if nobody is subscribed to the SSE stream.
+pub fn emit_realtime_event_with_data(
+    state: &AppState,
+    connection: &str,
+    database: &str,
+    table: &str,
+    query_type: &str,
+    row_count: Option<i64>,
+    user_email: Option<&str>,
+    data: Option<serde_json::Value>,
+) {
+    if state.realtime_tx.receiver_count() == 0 {
+        maybe_cleanup_expired_realtime(state);
+        return;
+    }
+
+    let access_db = match state.access_db.as_ref() {
+        Some(db) => db,
+        None => return,
+    };
+
+    if !access_db.is_realtime_enabled(connection, database, table) {
+        return;
+    }
+
+    let event = RealtimeEvent {
+        id: uuid::Uuid::new_v4().to_string(),
+        connection: connection.to_string(),
+        database: database.to_string(),
+        table: table.to_string(),
+        query_type: query_type.to_string(),
+        row_count,
+        user: user_email.map(|s| s.to_string()),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        data,
     };
 
     let _ = state.realtime_tx.send(event);

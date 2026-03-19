@@ -1242,6 +1242,7 @@ export interface RealtimeEvent {
   row_count: number | null;
   user: string | null;
   timestamp: string;
+  data?: Record<string, unknown> | Record<string, unknown>[];
 }
 
 export async function listRealtimeTables(): Promise<RealtimeTableEntry[]> {

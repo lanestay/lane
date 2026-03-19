@@ -3695,6 +3695,18 @@ impl AccessControlDb {
         Ok(())
     }
 
+    /// Remove all realtime tables older than the given duration.
+    pub fn cleanup_expired_realtime_tables(&self, max_age_secs: i64) -> Result<u64, String> {
+        let conn = self.conn.lock().unwrap();
+        let cutoff = chrono::Utc::now() - chrono::Duration::seconds(max_age_secs);
+        let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
+        let deleted = conn.execute(
+            "DELETE FROM realtime_tables WHERE created_at < ?1",
+            params![cutoff_str],
+        ).map_err(|e| format!("Failed to cleanup realtime tables: {}", e))?;
+        Ok(deleted as u64)
+    }
+
     pub fn disable_realtime(&self, connection: &str, database: &str, table: &str) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

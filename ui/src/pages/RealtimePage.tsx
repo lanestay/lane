@@ -8,12 +8,16 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import {
+  Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
+} from "@/components/ui/drawer";
 
 function getSessionToken(): string {
   return localStorage.getItem("session_token") ?? "";
@@ -38,8 +42,9 @@ export default function RealtimePage() {
   const [adding, setAdding] = useState(false);
 
   // Live stream state
-  const [watchKey, setWatchKey] = useState<string | null>(null);
+  const [watchEntry, setWatchEntry] = useState<RealtimeTableEntry | null>(null);
   const [events, setEvents] = useState<RealtimeEvent[]>([]);
+  const [showFull, setShowFull] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const refresh = useCallback(async () => {
@@ -97,19 +102,19 @@ export default function RealtimePage() {
   const handleDisable = async (entry: RealtimeTableEntry) => {
     try {
       await disableRealtime(entry.connection_name, entry.database_name, entry.table_name);
-      // Stop watching if we were watching this one
-      const key = `${entry.connection_name}/${entry.database_name}/${entry.table_name}`;
-      if (watchKey === key) stopWatching();
+      if (watchEntry && entryKey(watchEntry) === entryKey(entry)) stopWatching();
       await refresh();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
+  const entryKey = (e: RealtimeTableEntry) =>
+    `${e.connection_name}/${e.database_name}/${e.table_name}`;
+
   const startWatching = (entry: RealtimeTableEntry) => {
     stopWatching();
-    const key = `${entry.connection_name}/${entry.database_name}/${entry.table_name}`;
-    setWatchKey(key);
+    setWatchEntry(entry);
     setEvents([]);
 
     const params = new URLSearchParams({
@@ -125,9 +130,7 @@ export default function RealtimePage() {
         setEvents((prev) => [data, ...prev].slice(0, 200));
       } catch { /* ignore */ }
     });
-    es.onerror = () => {
-      // will auto-reconnect
-    };
+    es.onerror = () => {};
     eventSourceRef.current = es;
   };
 
@@ -136,7 +139,7 @@ export default function RealtimePage() {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    setWatchKey(null);
+    setWatchEntry(null);
   };
 
   // Cleanup on unmount
@@ -148,9 +151,11 @@ export default function RealtimePage() {
 
   if (loading) return <div className="p-4 text-muted-foreground">Loading...</div>;
 
+  const watchKey = watchEntry ? entryKey(watchEntry) : null;
+
   return (
     <div className="h-full flex flex-col p-4 gap-4">
-      <h2 className="text-xl font-bold">Realtime</h2>
+      <h2 className="text-xl font-bold">Realtime Monitoring</h2>
       {error && (
         <div className="bg-destructive/20 border border-destructive text-destructive px-4 py-2 rounded-md text-sm">
           {error}
@@ -161,7 +166,7 @@ export default function RealtimePage() {
       {/* Enable form */}
       <Card>
         <CardHeader>
-          <p className="text-sm font-medium">Enable Realtime on a Table</p>
+          <p className="text-sm font-medium">Enable Realtime Monitoring on a Table</p>
         </CardHeader>
         <CardContent>
           <div className="flex gap-2 items-end flex-wrap">
@@ -239,7 +244,7 @@ export default function RealtimePage() {
               </TableHeader>
               <TableBody>
                 {tables.map((entry) => {
-                  const key = `${entry.connection_name}/${entry.database_name}/${entry.table_name}`;
+                  const key = entryKey(entry);
                   const isWatching = watchKey === key;
                   return (
                     <TableRow key={key}>
@@ -272,59 +277,95 @@ export default function RealtimePage() {
         </CardContent>
       </Card>
 
-      {/* Live event stream */}
-      {watchKey && (
-        <Card className="flex-1 min-h-0 flex flex-col">
-          <CardHeader className="flex-row items-center justify-between py-2">
-            <div className="flex items-center gap-2">
+      {/* Watch drawer */}
+      <Drawer
+        open={!!watchEntry}
+        onOpenChange={(open) => { if (!open) stopWatching(); }}
+      >
+        <DrawerContent className="h-[50vh]">
+          <DrawerHeader className="flex-row items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
               </span>
-              <p className="text-sm font-medium">
-                Watching: <span className="font-mono">{watchKey}</span>
-              </p>
+              <div>
+                <DrawerTitle className="text-sm">
+                  Watching: <span className="font-mono">{watchKey}</span>
+                </DrawerTitle>
+                <DrawerDescription className="text-xs">
+                  {events.length} event{events.length !== 1 ? "s" : ""}
+                </DrawerDescription>
+              </div>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => setEvents([])}>Clear</Button>
-          </CardHeader>
-          <CardContent className="flex-1 min-h-0 overflow-auto">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-muted-foreground">Full details</label>
+                <Switch checked={showFull} onCheckedChange={setShowFull} />
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setEvents([])}>Clear</Button>
+              <Button size="sm" variant="outline" onClick={stopWatching}>Close</Button>
+            </div>
+          </DrawerHeader>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             {events.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Waiting for events... Execute a write query against this table to see events here.
+              <p className="text-sm text-muted-foreground text-center py-8">
+                Waiting for events...
               </p>
             ) : (
-              <div className="space-y-1 font-mono text-xs">
-                {events.map((evt) => (
-                  <div
-                    key={evt.id}
-                    className="flex items-center gap-3 px-2 py-1.5 rounded bg-accent/30 border border-border"
-                  >
-                    <Badge
-                      variant={
-                        evt.query_type === "INSERT" ? "default" :
-                        evt.query_type === "DELETE" ? "destructive" :
-                        "outline"
-                      }
-                      className="w-16 justify-center text-[10px]"
+              <div className="space-y-1.5 font-mono text-xs">
+                {events.map((evt) => {
+                  const dataStr = evt.data ? JSON.stringify(evt.data) : null;
+                  const truncated = dataStr && dataStr.length > 120 && !showFull
+                    ? dataStr.slice(0, 120) + "..."
+                    : dataStr;
+
+                  return (
+                    <div
+                      key={evt.id}
+                      className="px-3 py-2 rounded bg-accent/30 border border-border"
                     >
-                      {evt.query_type}
-                    </Badge>
-                    <span className="text-muted-foreground">
-                      {new Date(evt.timestamp).toLocaleTimeString()}
-                    </span>
-                    {evt.row_count != null && (
-                      <span>{evt.row_count} row{evt.row_count !== 1 ? "s" : ""}</span>
-                    )}
-                    {evt.user && (
-                      <span className="text-muted-foreground ml-auto truncate max-w-48">{evt.user}</span>
-                    )}
-                  </div>
-                ))}
+                      <div className="flex items-center gap-3">
+                        <Badge
+                          variant={
+                            evt.query_type === "INSERT" ? "default" :
+                            evt.query_type === "DELETE" ? "destructive" :
+                            "outline"
+                          }
+                          className="w-16 justify-center text-[10px] shrink-0"
+                        >
+                          {evt.query_type}
+                        </Badge>
+                        <span className="text-muted-foreground shrink-0">
+                          {new Date(evt.timestamp).toLocaleTimeString()}
+                        </span>
+                        {evt.row_count != null && (
+                          <span className="shrink-0">{evt.row_count} row{evt.row_count !== 1 ? "s" : ""}</span>
+                        )}
+                        {evt.user && (
+                          <span className="text-muted-foreground ml-auto truncate max-w-48">{evt.user}</span>
+                        )}
+                      </div>
+                      {truncated && (
+                        <div className="mt-1.5 text-[11px] text-muted-foreground">
+                          {showFull ? (
+                            <pre className="whitespace-pre-wrap break-all bg-muted/50 rounded p-2 border border-border">
+                              {JSON.stringify(evt.data, null, 2)}
+                            </pre>
+                          ) : (
+                            <span className="break-all">{truncated}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }

@@ -579,11 +579,21 @@ pub async fn create_handler(
         Err(resp) => return resp,
     };
 
-    // Emit realtime event for successful insert
+    // Emit realtime event with row data for successful insert
     let row_count = data.len() as i64;
-    crate::api::realtime::emit_realtime_event(
+    let user = extract_email(&auth).or_else(|| {
+        if let AuthResult::ServiceAccountAccess { account_name } = &auth {
+            Some(account_name.as_str())
+        } else { None }
+    });
+    let event_data = if state.realtime_tx.receiver_count() > 0 {
+        Some(if data.len() == 1 { serde_json::json!(data[0]) } else { serde_json::json!(data) })
+    } else {
+        None
+    };
+    crate::api::realtime::emit_realtime_event_with_data(
         &state, &connection, &database, &table, "INSERT",
-        Some(row_count), extract_email(&auth),
+        Some(row_count), user, event_data,
     );
 
     let is_bulk = matches!(&body, Value::Array(_));
