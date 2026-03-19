@@ -42,7 +42,8 @@ LANE_GITHUB_CLIENT_SECRET=...
 
 - Header: `x-api-key` or `x-lane-key`
 - Grants: `ServiceAccountAccess { account_name }`
-- Subject to [[permissions]] (sql_mode, database/table, connection, storage)
+- **Raw SQL is read-only** — writes must use the REST API (`/api/data/...`)
+- Subject to [[permissions]] (database/table, connection, storage)
 - Can be rotated via admin API
 - See [[permissions#Service Account Permissions]]
 

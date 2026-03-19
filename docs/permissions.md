@@ -86,6 +86,12 @@ Admin endpoints:
 
 ## Service Account Permissions
 
+Service accounts are designed for machines (POS systems, ETL pipelines, webhooks) and have stricter enforcement than user accounts:
+
+- **Raw SQL is read-only** — service accounts can run SELECT queries via `/api/lane/query` but all writes are blocked, regardless of sql_mode. This ensures table-level permissions cannot be bypassed.
+- **Writes must use the REST API** — `POST/PUT/DELETE /api/data/{connection}/{database}/{table}` enforces `can_read`, `can_write`, `can_update`, `can_delete` per table.
+- **Named data endpoints** — for complex read queries (JOINs, aggregations), admins can create named endpoints that service accounts call by name.
+
 Service accounts have their own parallel permission tables:
 
 - `sa_permissions` — database/table access (same structure as user permissions)
@@ -93,22 +99,23 @@ Service accounts have their own parallel permission tables:
 - `sa_storage_permissions` — storage bucket access
 
 Admin endpoints:
-- `GET/POST /api/lane/admin/sa-permissions`
-- `GET/POST /api/lane/admin/sa-connection-permissions`
+- `GET/POST /api/lane/admin/service-account-permissions`
+- `GET/POST /api/lane/admin/service-account-connections`
 - `GET/POST /api/lane/admin/sa-storage-permissions`
 
 ## Raw SQL vs REST API Enforcement
 
-**Raw SQL** (SQL editor, MCP tools, `/api/lane/query`) — access is controlled at the **database level** by SqlMode. Users with Full, Confirmed, or Supervised sql_mode have full access to any database they have a permission row for. The sql_mode determines what guardrails apply:
+**Raw SQL** (SQL editor, MCP tools, `/api/lane/query`) — for **users**, access is controlled at the **database level** by SqlMode. For **service accounts**, raw SQL is always read-only.
 
-| SqlMode | Raw SQL behavior |
-|---------|-----------------|
-| **Full** | Unrestricted on permitted databases |
-| **Confirmed** | DML/DDL requires approval (can self-approve after first admin review) |
-| **Supervised** | All writes require admin approval |
-| **ReadOnly** | SELECT only — all writes blocked |
+| SqlMode | User raw SQL behavior | Service account raw SQL behavior |
+|---------|----------------------|--------------------------------|
+| **Full** | Unrestricted on permitted databases | Read-only |
+| **Confirmed** | DML/DDL requires approval (can self-approve) | Read-only |
+| **Supervised** | All writes require admin approval | Read-only |
+| **ReadOnly** | SELECT only — all writes blocked | Read-only |
+| **None** | Blocked | Blocked |
 
-**REST API** (`/api/lane/rest/...`) — access is controlled at the **table level**. The `can_read`, `can_write`, `can_update`, `can_delete` flags on each permission row are enforced per table and operation.
+**REST API** (`/api/data/...`) — access is controlled at the **table level** for both users and service accounts. The `can_read`, `can_write`, `can_update`, `can_delete` flags on each permission row are enforced per table and operation.
 
 **Recommendation**: If a user needs per-table write restrictions, set them to **ReadOnly** sql_mode for raw SQL and grant granular table permissions for the REST API. They can run complex queries (JOINs, aggregations) via raw SQL and perform writes through the REST API where table-level permissions are fully enforced.
 

@@ -2785,7 +2785,6 @@ impl AccessControlDb {
     }
 
     /// Check if a service account has permission for a specific database+table+action.
-    #[allow(dead_code)]
     pub fn check_sa_table_permission_action(
         &self,
         name: &str,

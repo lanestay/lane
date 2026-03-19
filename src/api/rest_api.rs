@@ -288,9 +288,17 @@ pub async fn list_handler(
         Err(resp) => return resp,
     };
 
-    // Check read permission for token/session users
+    // Check read permission
     if let Some(email) = extract_email(&auth) {
         if !access_db.check_table_permission_action(email, &database, &table, PermAction::Read) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "Read access denied", "code": "FORBIDDEN"})),
+            )
+                .into_response();
+        }
+    } else if let AuthResult::ServiceAccountAccess { account_name } = &auth {
+        if !access_db.check_sa_table_permission_action(account_name, &database, &table, PermAction::Read) {
             return (
                 StatusCode::FORBIDDEN,
                 Json(json!({"error": "Read access denied", "code": "FORBIDDEN"})),
@@ -385,9 +393,17 @@ pub async fn get_handler(
         Err(resp) => return resp,
     };
 
-    // Check read permission for token/session users
+    // Check read permission
     if let Some(email) = extract_email(&auth) {
         if !access_db.check_table_permission_action(email, &database, &table, PermAction::Read) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "Read access denied", "code": "FORBIDDEN"})),
+            )
+                .into_response();
+        }
+    } else if let AuthResult::ServiceAccountAccess { account_name } = &auth {
+        if !access_db.check_sa_table_permission_action(account_name, &database, &table, PermAction::Read) {
             return (
                 StatusCode::FORBIDDEN,
                 Json(json!({"error": "Read access denied", "code": "FORBIDDEN"})),
@@ -473,9 +489,17 @@ pub async fn create_handler(
         Err(resp) => return resp,
     };
 
-    // Check insert permission for token/session users
+    // Check insert permission
     if let Some(email) = extract_email(&auth) {
         if !access_db.check_table_permission_action(email, &database, &table, PermAction::Insert) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "Insert access denied", "code": "FORBIDDEN"})),
+            )
+                .into_response();
+        }
+    } else if let AuthResult::ServiceAccountAccess { account_name } = &auth {
+        if !access_db.check_sa_table_permission_action(account_name, &database, &table, PermAction::Insert) {
             return (
                 StatusCode::FORBIDDEN,
                 Json(json!({"error": "Insert access denied", "code": "FORBIDDEN"})),
@@ -596,6 +620,14 @@ pub async fn update_handler(
             )
                 .into_response();
         }
+    } else if let AuthResult::ServiceAccountAccess { account_name } = &auth {
+        if !access_db.check_sa_table_permission_action(account_name, &database, &table, PermAction::Update) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "Update access denied", "code": "FORBIDDEN"})),
+            )
+                .into_response();
+        }
     }
 
     let db = match state.registry.resolve(Some(&connection)) {
@@ -702,6 +734,14 @@ pub async fn delete_handler(
 
     if let Some(email) = extract_email(&auth) {
         if !access_db.check_table_permission_action(email, &database, &table, PermAction::Delete) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "Delete access denied", "code": "FORBIDDEN"})),
+            )
+                .into_response();
+        }
+    } else if let AuthResult::ServiceAccountAccess { account_name } = &auth {
+        if !access_db.check_sa_table_permission_action(account_name, &database, &table, PermAction::Delete) {
             return (
                 StatusCode::FORBIDDEN,
                 Json(json!({"error": "Delete access denied", "code": "FORBIDDEN"})),
