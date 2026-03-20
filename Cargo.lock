@@ -1737,6 +1737,7 @@ dependencies = [
  "duckdb",
  "futures",
  "hex",
+ "hmac",
  "lettre",
  "mime_guess",
  "native-tls",

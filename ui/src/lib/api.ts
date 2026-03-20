@@ -1287,6 +1287,66 @@ export function subscribeRealtime(
 }
 
 // ============================================================================
+// Realtime Webhooks API
+// ============================================================================
+
+export interface RealtimeWebhook {
+  id: number;
+  connection_name: string;
+  database_name: string;
+  table_name: string;
+  url: string;
+  events: string;
+  secret: string | null;
+  is_enabled: boolean;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export async function listRealtimeWebhooks(
+  connection?: string,
+  database?: string,
+  table?: string,
+): Promise<RealtimeWebhook[]> {
+  const params = new URLSearchParams();
+  if (connection) params.set("connection", connection);
+  if (database) params.set("database", database);
+  if (table) params.set("table", table);
+  const qs = params.toString();
+  const res = await adminFetch(`realtime/webhooks${qs ? `?${qs}` : ""}`);
+  return res.json();
+}
+
+export async function createRealtimeWebhook(
+  connection: string,
+  database: string,
+  table: string,
+  url: string,
+  events: string[],
+  secret?: string,
+): Promise<RealtimeWebhook> {
+  const res = await adminFetch("realtime/webhooks", {
+    method: "POST",
+    body: JSON.stringify({ connection, database, table, url, events, secret: secret || undefined }),
+  });
+  return res.json();
+}
+
+export async function updateRealtimeWebhook(
+  id: number,
+  updates: { url?: string; events?: string[]; secret?: string; is_enabled?: boolean },
+): Promise<void> {
+  await adminFetch(`realtime/webhooks/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deleteRealtimeWebhook(id: number): Promise<void> {
+  await adminFetch(`realtime/webhooks/${id}`, { method: "DELETE" });
+}
+
+// ============================================================================
 // Monitor API
 // ============================================================================
 

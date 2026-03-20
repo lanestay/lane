@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   listRealtimeTables, enableRealtime, disableRealtime,
   listConnections, listDatabases, listTables,
+  listRealtimeWebhooks, createRealtimeWebhook, updateRealtimeWebhook, deleteRealtimeWebhook,
 } from "../lib/api";
-import type { RealtimeTableEntry, RealtimeEvent, ConnectionInfo } from "../lib/api";
+import type { RealtimeTableEntry, RealtimeEvent, ConnectionInfo, RealtimeWebhook } from "../lib/api";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -47,11 +48,31 @@ export default function RealtimePage() {
   const [showFull, setShowFull] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // Webhooks state
+  const [webhooks, setWebhooks] = useState<RealtimeWebhook[]>([]);
+  const [showWebhookForm, setShowWebhookForm] = useState(false);
+  const [webhookConn, setWebhookConn] = useState("");
+  const [webhookDb, setWebhookDb] = useState("");
+  const [webhookTable, setWebhookTable] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookEvents, setWebhookEvents] = useState<string[]>(["INSERT", "UPDATE", "DELETE"]);
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [webhookUseSecret, setWebhookUseSecret] = useState(false);
+  const [addingWebhook, setAddingWebhook] = useState(false);
+  const [revealedSecrets, setRevealedSecrets] = useState<Set<number>>(new Set());
+  const [webhookDbs, setWebhookDbs] = useState<string[]>([]);
+  const [webhookTables, setWebhookTables] = useState<string[]>([]);
+
   const refresh = useCallback(async () => {
     try {
-      const [t, c] = await Promise.all([listRealtimeTables(), listConnections()]);
+      const [t, c, w] = await Promise.all([
+        listRealtimeTables(),
+        listConnections(),
+        listRealtimeWebhooks(),
+      ]);
       setTables(t);
       setConnections(c);
+      setWebhooks(w);
       if (!addConn && c.length > 0) {
         const def = c.find((x) => x.is_default) ?? c[0];
         setAddConn(def.name);
@@ -84,6 +105,26 @@ export default function RealtimePage() {
       setAddTable("");
     }).catch(() => {});
   }, [addConn, addDb]);
+
+  // Load databases for webhook form connection
+  useEffect(() => {
+    if (!webhookConn) { setWebhookDbs([]); return; }
+    listDatabases(webhookConn).then((dbs) => {
+      setWebhookDbs(dbs.map((d) => d.name));
+      setWebhookDb("");
+      setWebhookTables([]);
+      setWebhookTable("");
+    }).catch(() => {});
+  }, [webhookConn]);
+
+  // Load tables for webhook form database
+  useEffect(() => {
+    if (!webhookConn || !webhookDb) { setWebhookTables([]); setWebhookTable(""); return; }
+    listTables(webhookDb, webhookConn).then((tbls) => {
+      setWebhookTables(tbls.map((t) => t.TABLE_NAME));
+      setWebhookTable("");
+    }).catch(() => {});
+  }, [webhookConn, webhookDb]);
 
   const handleEnable = async () => {
     if (!addConn || !addDb || !addTable) return;
@@ -148,6 +189,61 @@ export default function RealtimePage() {
       if (eventSourceRef.current) eventSourceRef.current.close();
     };
   }, []);
+
+  // Webhook handlers
+  const handleCreateWebhook = async () => {
+    if (!webhookConn || !webhookDb || !webhookTable || !webhookUrl || webhookEvents.length === 0) return;
+    setAddingWebhook(true);
+    try {
+      await createRealtimeWebhook(
+        webhookConn, webhookDb, webhookTable, webhookUrl, webhookEvents,
+        webhookUseSecret ? webhookSecret : undefined,
+      );
+      setShowWebhookForm(false);
+      setWebhookUrl("");
+      setWebhookSecret("");
+      setWebhookUseSecret(false);
+      setWebhookEvents(["INSERT", "UPDATE", "DELETE"]);
+      await refresh();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAddingWebhook(false);
+    }
+  };
+
+  const handleToggleWebhook = async (hook: RealtimeWebhook) => {
+    try {
+      await updateRealtimeWebhook(hook.id, { is_enabled: !hook.is_enabled });
+      await refresh();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleDeleteWebhook = async (id: number) => {
+    try {
+      await deleteRealtimeWebhook(id);
+      setRevealedSecrets((prev) => { const next = new Set(prev); next.delete(id); return next; });
+      await refresh();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const toggleRevealSecret = (id: number) => {
+    setRevealedSecrets((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleWebhookEvent = (evt: string) => {
+    setWebhookEvents((prev) =>
+      prev.includes(evt) ? prev.filter((e) => e !== evt) : [...prev, evt]
+    );
+  };
 
   if (loading) return <div className="p-4 text-muted-foreground">Loading...</div>;
 
@@ -271,6 +367,194 @@ export default function RealtimePage() {
                     </TableRow>
                   );
                 })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Webhooks */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <p className="text-sm font-medium">Webhooks ({webhooks.length})</p>
+          <Button size="sm" variant="outline" onClick={() => {
+            setShowWebhookForm(!showWebhookForm);
+            if (!webhookConn && connections.length > 0) {
+              const def = connections.find((x) => x.is_default) ?? connections[0];
+              setWebhookConn(def.name);
+            }
+          }}>
+            {showWebhookForm ? "Cancel" : "Add Webhook"}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Create webhook form */}
+          {showWebhookForm && (
+            <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
+              <div className="flex gap-2 items-end flex-wrap">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Connection</label>
+                  <Select value={webhookConn} onValueChange={setWebhookConn}>
+                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {connections.map((c) => (
+                        <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Database</label>
+                  <Select value={webhookDb} onValueChange={setWebhookDb}>
+                    <SelectTrigger className="w-44"><SelectValue placeholder="Select..." /></SelectTrigger>
+                    <SelectContent>
+                      {webhookDbs.map((d) => (
+                        <SelectItem key={d} value={d}>{d}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Table</label>
+                  {webhookTables.length > 0 ? (
+                    <Select value={webhookTable} onValueChange={setWebhookTable}>
+                      <SelectTrigger className="w-48"><SelectValue placeholder="Select..." /></SelectTrigger>
+                      <SelectContent>
+                        {webhookTables.map((t) => (
+                          <SelectItem key={t} value={t}>{t}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input className="w-48" placeholder="Table name" value={webhookTable} onChange={(e) => setWebhookTable(e.target.value)} />
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Destination URL</label>
+                <Input placeholder="External URL for egress (e.g. https://destination-app.com/endpoint)" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Events</label>
+                <div className="flex gap-2">
+                  {["INSERT", "UPDATE", "DELETE"].map((evt) => (
+                    <Button
+                      key={evt}
+                      size="sm"
+                      variant={webhookEvents.includes(evt) ? "default" : "outline"}
+                      onClick={() => toggleWebhookEvent(evt)}
+                    >
+                      {evt}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Switch checked={webhookUseSecret} onCheckedChange={(checked) => {
+                    setWebhookUseSecret(checked);
+                    if (checked && !webhookSecret) {
+                      const bytes = new Uint8Array(32);
+                      crypto.getRandomValues(bytes);
+                      setWebhookSecret(Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join(""));
+                    }
+                  }} />
+                  <label className="text-xs text-muted-foreground">HMAC-SHA256 Signing</label>
+                </div>
+                {webhookUseSecret && (
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      className="font-mono text-xs select-all"
+                      value={webhookSecret}
+                    />
+                    <Button size="sm" variant="outline" onClick={() => {
+                      const bytes = new Uint8Array(32);
+                      crypto.getRandomValues(bytes);
+                      setWebhookSecret(Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join(""));
+                    }}>
+                      Regenerate
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <Button
+                size="sm"
+                disabled={addingWebhook || !webhookConn || !webhookDb || !webhookTable || !webhookUrl || webhookEvents.length === 0}
+                onClick={handleCreateWebhook}
+              >
+                {addingWebhook ? "Creating..." : "Create Webhook"}
+              </Button>
+            </div>
+          )}
+
+          {/* Webhook list */}
+          {webhooks.length === 0 && !showWebhookForm ? (
+            <p className="text-sm text-muted-foreground">No webhooks configured yet.</p>
+          ) : webhooks.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Table</TableHead>
+                  <TableHead>URL</TableHead>
+                  <TableHead>Events</TableHead>
+                  <TableHead>Secret</TableHead>
+                  <TableHead>Enabled</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {webhooks.map((hook) => (
+                  <TableRow key={hook.id}>
+                    <TableCell>
+                      <div className="space-y-0.5">
+                        <Badge variant="outline" className="text-[10px]">{hook.connection_name}</Badge>
+                        <div className="text-xs text-muted-foreground">{hook.database_name}</div>
+                        <div className="font-mono text-sm">{hook.table_name}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="font-mono text-xs break-all">{hook.url}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 flex-wrap">
+                        {hook.events.split(",").map((e) => (
+                          <Badge key={e} variant="secondary" className="text-[10px]">{e.trim()}</Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {hook.secret ? (
+                        <div className="space-y-1">
+                          <button
+                            className="text-xs text-blue-500 hover:underline"
+                            onClick={() => toggleRevealSecret(hook.id)}
+                          >
+                            {revealedSecrets.has(hook.id) ? "Hide" : "Reveal"}
+                          </button>
+                          {revealedSecrets.has(hook.id) && (
+                            <div className="font-mono text-xs bg-muted rounded px-2 py-1 break-all select-all">
+                              {hook.secret}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">None</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Switch
+                        checked={hook.is_enabled}
+                        onCheckedChange={() => handleToggleWebhook(hook)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="destructive" onClick={() => handleDeleteWebhook(hook.id)}>
+                        Delete
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           )}

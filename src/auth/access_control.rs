@@ -111,6 +111,20 @@ pub struct RealtimeTableEntry {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealtimeWebhook {
+    pub id: i64,
+    pub connection_name: String,
+    pub database_name: String,
+    pub table_name: String,
+    pub url: String,
+    pub events: String,
+    pub secret: Option<String>,
+    pub is_enabled: bool,
+    pub created_by: Option<String>,
+    pub created_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RestTableEntry {
     pub connection_name: String,
@@ -687,6 +701,20 @@ impl AccessControlDb {
                 enabled_by TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(connection_name, database_name, table_name)
+            );
+
+            CREATE TABLE IF NOT EXISTS realtime_webhooks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_name TEXT NOT NULL,
+                database_name TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                events TEXT NOT NULL DEFAULT 'INSERT,UPDATE,DELETE',
+                secret TEXT,
+                is_enabled INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(connection_name, database_name, table_name, url)
             );
 
             CREATE TABLE IF NOT EXISTS rest_tables (
@@ -3701,7 +3729,13 @@ impl AccessControlDb {
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(max_age_secs);
         let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
         let deleted = conn.execute(
-            "DELETE FROM realtime_tables WHERE created_at < ?1",
+            "DELETE FROM realtime_tables WHERE created_at < ?1 AND NOT EXISTS (
+                SELECT 1 FROM realtime_webhooks w
+                WHERE w.connection_name = realtime_tables.connection_name COLLATE NOCASE
+                AND w.database_name = realtime_tables.database_name COLLATE NOCASE
+                AND w.table_name = realtime_tables.table_name COLLATE NOCASE
+                AND w.is_enabled = 1
+            )",
             params![cutoff_str],
         ).map_err(|e| format!("Failed to cleanup realtime tables: {}", e))?;
         Ok(deleted as u64)
@@ -3734,6 +3768,189 @@ impl AccessControlDb {
             .map_err(|e| format!("Failed to query: {}", e))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("Failed to collect: {}", e))
+    }
+
+    // ========================================================================
+    // Realtime Webhooks
+    // ========================================================================
+
+    pub fn create_realtime_webhook(
+        &self,
+        connection: &str,
+        database: &str,
+        table: &str,
+        url: &str,
+        events: &str,
+        secret: Option<&str>,
+        created_by: Option<&str>,
+    ) -> Result<RealtimeWebhook, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO realtime_webhooks (connection_name, database_name, table_name, url, events, secret, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![connection, database, table, url, events, secret, created_by],
+        ).map_err(|e| format!("Failed to create webhook: {}", e))?;
+        let id = conn.last_insert_rowid();
+        Ok(RealtimeWebhook {
+            id,
+            connection_name: connection.to_string(),
+            database_name: database.to_string(),
+            table_name: table.to_string(),
+            url: url.to_string(),
+            events: events.to_string(),
+            secret: secret.map(|s| s.to_string()),
+            is_enabled: true,
+            created_by: created_by.map(|s| s.to_string()),
+            created_at: None,
+        })
+    }
+
+    pub fn list_realtime_webhooks(
+        &self,
+        connection: Option<&str>,
+        database: Option<&str>,
+        table: Option<&str>,
+    ) -> Result<Vec<RealtimeWebhook>, String> {
+        let conn = self.conn.lock().unwrap();
+        let base = "SELECT id, connection_name, database_name, table_name, url, events, secret, is_enabled, created_by, created_at FROM realtime_webhooks";
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+        if let Some(c) = connection {
+            conditions.push(format!("connection_name = ?{} COLLATE NOCASE", idx));
+            params_vec.push(Box::new(c.to_string()));
+            idx += 1;
+        }
+        if let Some(d) = database {
+            conditions.push(format!("database_name = ?{} COLLATE NOCASE", idx));
+            params_vec.push(Box::new(d.to_string()));
+            idx += 1;
+        }
+        if let Some(t) = table {
+            conditions.push(format!("table_name = ?{} COLLATE NOCASE", idx));
+            params_vec.push(Box::new(t.to_string()));
+            let _ = idx;
+        }
+        let sql = if conditions.is_empty() {
+            format!("{} ORDER BY id", base)
+        } else {
+            format!("{} WHERE {} ORDER BY id", base, conditions.join(" AND "))
+        };
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("Failed to prepare: {}", e))?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                let is_enabled_int: i32 = row.get(7)?;
+                Ok(RealtimeWebhook {
+                    id: row.get(0)?,
+                    connection_name: row.get(1)?,
+                    database_name: row.get(2)?,
+                    table_name: row.get(3)?,
+                    url: row.get(4)?,
+                    events: row.get(5)?,
+                    secret: row.get(6)?,
+                    is_enabled: is_enabled_int != 0,
+                    created_by: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query: {}", e))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to collect: {}", e))
+    }
+
+    pub fn update_realtime_webhook(
+        &self,
+        id: i64,
+        url: &str,
+        events: &str,
+        secret: Option<&str>,
+        is_enabled: bool,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "UPDATE realtime_webhooks SET url = ?1, events = ?2, secret = ?3, is_enabled = ?4 WHERE id = ?5",
+            params![url, events, secret, is_enabled as i32, id],
+        ).map_err(|e| format!("Failed to update webhook: {}", e))?;
+        if affected == 0 {
+            return Err("Webhook not found".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn delete_realtime_webhook(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM realtime_webhooks WHERE id = ?1",
+            params![id],
+        ).map_err(|e| format!("Failed to delete webhook: {}", e))?;
+        if affected == 0 {
+            return Err("Webhook not found".to_string());
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn get_realtime_webhooks_for_table(
+        &self,
+        connection: &str,
+        database: &str,
+        table: &str,
+    ) -> Vec<RealtimeWebhook> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, connection_name, database_name, table_name, url, events, secret, is_enabled, created_by, created_at FROM realtime_webhooks WHERE connection_name = ?1 COLLATE NOCASE AND database_name = ?2 COLLATE NOCASE AND table_name = ?3 COLLATE NOCASE AND is_enabled = 1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        let rows = match stmt.query_map(params![connection, database, table], |row| {
+            let is_enabled_int: i32 = row.get(7)?;
+            Ok(RealtimeWebhook {
+                id: row.get(0)?,
+                connection_name: row.get(1)?,
+                database_name: row.get(2)?,
+                table_name: row.get(3)?,
+                url: row.get(4)?,
+                events: row.get(5)?,
+                secret: row.get(6)?,
+                is_enabled: is_enabled_int != 0,
+                created_by: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        }) {
+            Ok(r) => r,
+            Err(_) => return vec![],
+        };
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    pub fn get_all_realtime_webhooks_enabled(&self) -> Vec<RealtimeWebhook> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT id, connection_name, database_name, table_name, url, events, secret, is_enabled, created_by, created_at FROM realtime_webhooks WHERE is_enabled = 1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        let rows = match stmt.query_map([], |row| {
+            let is_enabled_int: i32 = row.get(7)?;
+            Ok(RealtimeWebhook {
+                id: row.get(0)?,
+                connection_name: row.get(1)?,
+                database_name: row.get(2)?,
+                table_name: row.get(3)?,
+                url: row.get(4)?,
+                events: row.get(5)?,
+                secret: row.get(6)?,
+                is_enabled: is_enabled_int != 0,
+                created_by: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        }) {
+            Ok(r) => r,
+            Err(_) => return vec![],
+        };
+        rows.filter_map(|r| r.ok()).collect()
     }
 
     // ========================================================================

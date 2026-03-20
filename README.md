@@ -9,7 +9,7 @@ Self-contained database platform — query engine, REST API, MCP server, and Rea
 - **Cross-database analysis** — export query results to S3/MinIO, import into the DuckDB workspace, join data across databases, export results back to storage as CSV, JSON, or Parquet.
 - **Give AI agents safe database access** — 33 MCP tools with read/write separation, permission tiers, and approval workflows.
 - **Control access** — four SQL permission tiers, per-table CRUD, per-connection restrictions, service accounts, PII detection/redaction, and teams.
-- **Stream changes** — SSE on any table, no polling, no external broker.
+- **Stream changes** — SSE on any table, outbound webhooks on writes, no polling, no external broker.
 
 ## Zero to Hero Deploy - AKA Quickest Start
 
@@ -154,6 +154,47 @@ curl http://localhost:3401/api/lane \
   }'
 ```
 
+## Realtime & Webhooks
+
+Enable realtime monitoring on a table, then subscribe via SSE or configure webhooks to POST row data to external systems on every write:
+
+```bash
+# Enable realtime on a table
+curl -X POST http://localhost:3401/api/lane/admin/realtime/enable \
+  -H "Content-Type: application/json" \
+  -H "x-lane-key: YOUR_API_KEY" \
+  -d '{"connection": "production", "database": "mydb", "table": "transactions"}'
+
+# Create a webhook — Lane POSTs to this URL on every INSERT
+curl -X POST http://localhost:3401/api/lane/admin/realtime/webhooks \
+  -H "Content-Type: application/json" \
+  -H "x-lane-key: YOUR_API_KEY" \
+  -d '{
+    "connection": "production",
+    "database": "mydb",
+    "table": "transactions",
+    "url": "https://destination-app.com/endpoint",
+    "events": ["INSERT", "UPDATE", "DELETE"]
+  }'
+```
+
+When a write hits the table, the destination receives:
+
+```json
+{
+  "event": "INSERT",
+  "connection": "production",
+  "database": "mydb",
+  "table": "transactions",
+  "row_count": 1,
+  "user": "pos-system",
+  "timestamp": "2026-03-19T08:05:39.167Z",
+  "data": {"id": 204600, "total": "14.00", "payment_method": "card"}
+}
+```
+
+Webhooks support optional HMAC-SHA256 signing — generate a secret in the UI and share it with the receiving system for payload verification. SSE streaming is also available for live UI monitoring at `/api/lane/realtime/subscribe`.
+
 ## Storage Integration
 
 Export query results to S3, import files into the DuckDB workspace, and export workspace analysis back to storage:
@@ -256,6 +297,7 @@ Full documentation is in the [`docs/`](docs/index.md) directory:
 - [Auth](docs/auth.md) — authentication methods
 - [Permissions](docs/permissions.md) — access control model
 - [PII](docs/pii.md) — PII detection and redaction
+- [Realtime](docs/realtime.md) — SSE streaming and webhooks
 - [UI](docs/ui.md) — web UI pages and features
 
 ## Contributing

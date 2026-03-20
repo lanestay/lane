@@ -586,11 +586,7 @@ pub async fn create_handler(
             Some(account_name.as_str())
         } else { None }
     });
-    let event_data = if state.realtime_tx.receiver_count() > 0 {
-        Some(if data.len() == 1 { serde_json::json!(data[0]) } else { serde_json::json!(data) })
-    } else {
-        None
-    };
+    let event_data = Some(if data.len() == 1 { serde_json::json!(data[0]) } else { serde_json::json!(data) });
     crate::api::realtime::emit_realtime_event_with_data(
         &state, &connection, &database, &table, "INSERT",
         Some(row_count), user, event_data,
@@ -711,10 +707,10 @@ pub async fn update_handler(
 
     match data.into_iter().next() {
         Some(row) => {
-            // Emit realtime event for successful update
-            crate::api::realtime::emit_realtime_event(
+            // Emit realtime event with data for successful update
+            crate::api::realtime::emit_realtime_event_with_data(
                 &state, &connection, &database, &table, "UPDATE",
-                Some(1), extract_email(&auth),
+                Some(1), extract_email(&auth), Some(serde_json::json!(&row)),
             );
             (StatusCode::OK, Json(json!({"data": row}))).into_response()
         }
@@ -806,10 +802,11 @@ pub async fn delete_handler(
     let sql = sql_builder::build_delete(&table, schema, &pk_col, &id, dialect);
     match execute_sql(&state, &connection, &database, &sql).await {
         Ok(_) => {
-            // Emit realtime event for successful delete
-            crate::api::realtime::emit_realtime_event(
+            // Emit realtime event with deleted row identifier
+            crate::api::realtime::emit_realtime_event_with_data(
                 &state, &connection, &database, &table, "DELETE",
                 Some(1), extract_email(&auth),
+                Some(serde_json::json!({ pk_col.clone(): id.clone() })),
             );
             StatusCode::NO_CONTENT.into_response()
         }

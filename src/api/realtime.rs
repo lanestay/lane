@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -9,14 +9,15 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
-use tokio::sync::broadcast;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use tokio::sync::{broadcast, RwLock};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 use crate::auth::{self, AuthResult};
-use crate::auth::access_control::AccessControlDb;
+use crate::auth::access_control::{AccessControlDb, RealtimeWebhook};
 use super::AppState;
 
 /// Last time we checked for expired realtime tables (unix timestamp).
@@ -73,6 +74,158 @@ pub struct RealtimeTableRequest {
     pub connection: Option<String>,
     pub database: String,
     pub table: String,
+}
+
+// ============================================================================
+// Webhook Cache
+// ============================================================================
+
+/// In-memory webhook cache keyed by (connection, database, table) -> Vec<WebhookConfig>.
+/// Refreshed from DB when the dirty flag is set by admin operations.
+pub struct WebhookCache {
+    cache: RwLock<HashMap<(String, String, String), Vec<RealtimeWebhook>>>,
+    dirty: AtomicBool,
+    loaded: AtomicBool,
+}
+
+impl WebhookCache {
+    pub fn new() -> Self {
+        Self {
+            cache: RwLock::new(HashMap::new()),
+            dirty: AtomicBool::new(false),
+            loaded: AtomicBool::new(false),
+        }
+    }
+
+    pub fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Reload from DB if needed, then return webhooks matching the given key and event type.
+    pub async fn get_matching(
+        &self,
+        access_db: &AccessControlDb,
+        connection: &str,
+        database: &str,
+        table: &str,
+        event_type: &str,
+    ) -> Vec<RealtimeWebhook> {
+        // Reload if dirty or never loaded
+        if self.dirty.load(Ordering::Relaxed) || !self.loaded.load(Ordering::Relaxed) {
+            self.reload(access_db).await;
+        }
+
+        let cache = self.cache.read().await;
+        let key = (
+            connection.to_lowercase(),
+            database.to_lowercase(),
+            table.to_lowercase(),
+        );
+        match cache.get(&key) {
+            Some(hooks) => hooks
+                .iter()
+                .filter(|h| {
+                    h.events
+                        .split(',')
+                        .any(|e| e.trim().eq_ignore_ascii_case(event_type))
+                })
+                .cloned()
+                .collect(),
+            None => vec![],
+        }
+    }
+
+    async fn reload(&self, access_db: &AccessControlDb) {
+        let all = access_db.get_all_realtime_webhooks_enabled();
+        let mut map: HashMap<(String, String, String), Vec<RealtimeWebhook>> = HashMap::new();
+        for hook in all {
+            let key = (
+                hook.connection_name.to_lowercase(),
+                hook.database_name.to_lowercase(),
+                hook.table_name.to_lowercase(),
+            );
+            map.entry(key).or_default().push(hook);
+        }
+        let mut cache = self.cache.write().await;
+        *cache = map;
+        self.dirty.store(false, Ordering::Relaxed);
+        self.loaded.store(true, Ordering::Relaxed);
+    }
+}
+
+// Global webhook cache — lazily initialized
+static WEBHOOK_CACHE: std::sync::OnceLock<WebhookCache> = std::sync::OnceLock::new();
+
+fn webhook_cache() -> &'static WebhookCache {
+    WEBHOOK_CACHE.get_or_init(WebhookCache::new)
+}
+
+// ============================================================================
+// Webhook Firing
+// ============================================================================
+
+/// Fire matching webhooks for a realtime event. Async, fire-and-forget via tokio::spawn.
+fn fire_realtime_webhooks(
+    access_db: Arc<AccessControlDb>,
+    event: &RealtimeEvent,
+) {
+    let connection = event.connection.clone();
+    let database = event.database.clone();
+    let table = event.table.clone();
+    let event_type = event.query_type.clone();
+    let payload = json!({
+        "event": &event.query_type,
+        "connection": &event.connection,
+        "database": &event.database,
+        "table": &event.table,
+        "row_count": &event.row_count,
+        "user": &event.user,
+        "timestamp": &event.timestamp,
+        "data": &event.data,
+    });
+
+    tokio::spawn(async move {
+        let hooks = webhook_cache()
+            .get_matching(&access_db, &connection, &database, &table, &event_type)
+            .await;
+        if hooks.is_empty() {
+            return;
+        }
+
+        let body = match serde_json::to_vec(&payload) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+
+        for hook in hooks {
+            let mut req = client
+                .post(&hook.url)
+                .header("Content-Type", "application/json")
+                .header("X-Lane-Event", &event_type);
+
+            // HMAC signature if secret is configured
+            if let Some(ref secret) = hook.secret {
+                use hmac::{Hmac, Mac};
+                use sha2::Sha256;
+                type HmacSha256 = Hmac<Sha256>;
+                if let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) {
+                    mac.update(&body);
+                    let sig = hex::encode(mac.finalize().into_bytes());
+                    req = req.header("X-Lane-Signature", format!("sha256={}", sig));
+                }
+            }
+
+            let resp = req.body(body.clone()).send().await;
+            if let Err(e) = resp {
+                tracing::warn!("Realtime webhook to {} failed: {}", hook.url, e);
+            }
+        }
+    });
 }
 
 // ============================================================================
@@ -158,11 +311,6 @@ pub fn try_emit_realtime_event_direct(
     row_count: Option<i64>,
     user_email: Option<&str>,
 ) {
-    if tx.receiver_count() == 0 {
-        // No easy access to AppState here, cleanup happens in other emit paths
-        return;
-    }
-
     let table = match extract_write_target_table(query) {
         Some(t) => t,
         None => return,
@@ -185,6 +333,7 @@ pub fn try_emit_realtime_event_direct(
     };
 
     // Best-effort send — don't care if nobody is listening
+    // Note: webhooks not fired from the _direct path (MCP) — only from emit_realtime_event*
     let _ = tx.send(event);
 }
 
@@ -201,7 +350,7 @@ pub fn emit_realtime_event(
 ) {
     if state.realtime_tx.receiver_count() == 0 {
         maybe_cleanup_expired_realtime(state);
-        return;
+        // Still check webhooks even with no SSE subscribers
     }
 
     let access_db = match state.access_db.as_ref() {
@@ -225,11 +374,11 @@ pub fn emit_realtime_event(
         data: None,
     };
 
+    fire_realtime_webhooks(Arc::clone(access_db), &event);
     let _ = state.realtime_tx.send(event);
 }
 
 /// Emit a realtime event with row data attached (for REST API CRUD handlers).
-/// Skips all work if nobody is subscribed to the SSE stream.
 pub fn emit_realtime_event_with_data(
     state: &AppState,
     connection: &str,
@@ -242,7 +391,7 @@ pub fn emit_realtime_event_with_data(
 ) {
     if state.realtime_tx.receiver_count() == 0 {
         maybe_cleanup_expired_realtime(state);
-        return;
+        // Still check webhooks even with no SSE subscribers
     }
 
     let access_db = match state.access_db.as_ref() {
@@ -266,6 +415,7 @@ pub fn emit_realtime_event_with_data(
         data,
     };
 
+    fire_realtime_webhooks(Arc::clone(access_db), &event);
     let _ = state.realtime_tx.send(event);
 }
 
@@ -497,6 +647,201 @@ pub async fn list_realtime_tables_handler(
             Json(json!({"error": e})),
         )
             .into_response(),
+    }
+}
+
+// ============================================================================
+// Webhook Admin Handlers
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookCreateRequest {
+    pub connection: Option<String>,
+    pub database: String,
+    pub table: String,
+    pub url: String,
+    pub events: Option<Vec<String>>,
+    pub secret: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookUpdateRequest {
+    pub url: Option<String>,
+    pub events: Option<Vec<String>>,
+    pub secret: Option<String>,
+    pub is_enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookListQuery {
+    pub connection: Option<String>,
+    pub database: Option<String>,
+    pub table: Option<String>,
+}
+
+pub async fn create_webhook_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<WebhookCreateRequest>,
+) -> Response {
+    if let Err(resp) = check_admin_auth(&headers, &state).await {
+        return resp;
+    }
+    let db = match require_access_db(&state) {
+        Ok(db) => db,
+        Err(resp) => return resp,
+    };
+
+    let connection = body.connection.as_deref().unwrap_or("default");
+    let events = body
+        .events
+        .as_ref()
+        .map(|e| e.join(","))
+        .unwrap_or_else(|| "INSERT,UPDATE,DELETE".to_string());
+
+    match db.create_realtime_webhook(
+        connection,
+        &body.database,
+        &body.table,
+        &body.url,
+        &events,
+        body.secret.as_deref(),
+        None,
+    ) {
+        Ok(hook) => {
+            webhook_cache().mark_dirty();
+            (StatusCode::CREATED, Json(json!(hook))).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn list_webhooks_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<WebhookListQuery>,
+) -> Response {
+    if let Err(resp) = check_admin_auth(&headers, &state).await {
+        return resp;
+    }
+    let db = match require_access_db(&state) {
+        Ok(db) => db,
+        Err(resp) => return resp,
+    };
+
+    match db.list_realtime_webhooks(
+        params.connection.as_deref(),
+        params.database.as_deref(),
+        params.table.as_deref(),
+    ) {
+        Ok(hooks) => (StatusCode::OK, Json(json!(hooks))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn update_webhook_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<WebhookUpdateRequest>,
+) -> Response {
+    if let Err(resp) = check_admin_auth(&headers, &state).await {
+        return resp;
+    }
+    let db = match require_access_db(&state) {
+        Ok(db) => db,
+        Err(resp) => return resp,
+    };
+
+    // Fetch existing to merge partial updates
+    let existing = match db.list_realtime_webhooks(None, None, None) {
+        Ok(hooks) => match hooks.into_iter().find(|h| h.id == id) {
+            Some(h) => h,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "Webhook not found"})),
+                )
+                    .into_response()
+            }
+        },
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e})),
+            )
+                .into_response()
+        }
+    };
+
+    let url = body.url.as_deref().unwrap_or(&existing.url);
+    let events = body
+        .events
+        .as_ref()
+        .map(|e| e.join(","))
+        .unwrap_or(existing.events);
+    let secret = if body.secret.is_some() {
+        body.secret.as_deref()
+    } else {
+        existing.secret.as_deref()
+    };
+    let is_enabled = body.is_enabled.unwrap_or(existing.is_enabled);
+
+    match db.update_realtime_webhook(id, url, &events, secret, is_enabled) {
+        Ok(()) => {
+            webhook_cache().mark_dirty();
+            (
+                StatusCode::OK,
+                Json(json!({"success": true, "message": "Webhook updated"})),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn delete_webhook_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if let Err(resp) = check_admin_auth(&headers, &state).await {
+        return resp;
+    }
+    let db = match require_access_db(&state) {
+        Ok(db) => db,
+        Err(resp) => return resp,
+    };
+
+    match db.delete_realtime_webhook(id) {
+        Ok(()) => {
+            webhook_cache().mark_dirty();
+            (
+                StatusCode::OK,
+                Json(json!({"success": true, "message": "Webhook deleted"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = if e.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(json!({"error": e}))).into_response()
+        }
     }
 }
 

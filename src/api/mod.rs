@@ -384,6 +384,16 @@ pub fn routes(state: Arc<AppState>) -> Router {
             get(realtime::list_realtime_tables_handler),
         )
         .route(
+            "/api/lane/admin/realtime/webhooks",
+            post(realtime::create_webhook_handler)
+                .get(realtime::list_webhooks_handler),
+        )
+        .route(
+            "/api/lane/admin/realtime/webhooks/{id}",
+            put(realtime::update_webhook_handler)
+                .delete(realtime::delete_webhook_handler),
+        )
+        .route(
             "/api/lane/realtime/subscribe",
             get(realtime::subscribe_handler),
         )
