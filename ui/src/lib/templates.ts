@@ -1,7 +1,7 @@
 export interface SqlTemplate {
   name: string;
   description: string;
-  dialects: ("mssql" | "postgres" | "duckdb")[];
+  dialects: ("mssql" | "postgres" | "duckdb" | "clickhouse")[];
   sql: string;
 }
 
@@ -15,7 +15,7 @@ export const templates: SqlTemplate[] = [
   {
     name: "Top 100 Rows",
     description: "Select first 100 rows from a table",
-    dialects: ["postgres", "duckdb"],
+    dialects: ["postgres", "duckdb", "clickhouse"],
     sql: "SELECT *\nFROM table_name\nORDER BY 1\nLIMIT 100;",
   },
   {
@@ -136,5 +136,5 @@ ORDER BY pg_database_size(datname) DESC;`,
 
 export function getTemplatesForDialect(dialect?: string): SqlTemplate[] {
   if (!dialect) return templates;
-  return templates.filter((t) => t.dialects.includes(dialect as "mssql" | "postgres" | "duckdb"));
+  return templates.filter((t) => t.dialects.includes(dialect as "mssql" | "postgres" | "duckdb" | "clickhouse"));
 }

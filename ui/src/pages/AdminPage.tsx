@@ -236,7 +236,7 @@ function CreateConnectionDialog({ open, onClose, onCreated, onError }: {
     }
   }, [open]);
 
-  const defaultPort = connType === "minio" ? "9000" : connType === "postgres" ? "5432" : "1433";
+  const defaultPort = connType === "minio" ? "9000" : connType === "postgres" ? "5432" : connType === "clickhouse" ? "8123" : "1433";
 
   const handleTest = async () => {
     setTesting(true);
@@ -267,7 +267,7 @@ function CreateConnectionDialog({ open, onClose, onCreated, onError }: {
       const data: CreateConnectionData = {
         name: name.trim(), type: connType, host: host.trim(),
         port: parseInt(port || defaultPort),
-        database: connType === "minio" ? "" : (database.trim() || (connType === "postgres" ? "postgres" : "master")),
+        database: connType === "minio" ? "" : (database.trim() || (connType === "postgres" ? "postgres" : connType === "clickhouse" ? "default" : "master")),
         username: username.trim(), password,
         is_default: isDefault,
       };
@@ -302,6 +302,7 @@ function CreateConnectionDialog({ open, onClose, onCreated, onError }: {
                 <SelectContent>
                   <SelectItem value="mssql">MSSQL</SelectItem>
                   <SelectItem value="postgres">Postgres</SelectItem>
+                  <SelectItem value="clickhouse">ClickHouse</SelectItem>
                   <SelectItem value="minio">MinIO / S3</SelectItem>
                 </SelectContent>
               </Select>
@@ -320,13 +321,13 @@ function CreateConnectionDialog({ open, onClose, onCreated, onError }: {
           {connType !== "minio" && (
             <div className="space-y-2">
               <Label>Database</Label>
-              <Input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder={connType === "postgres" ? "postgres" : "master"} />
+              <Input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder={connType === "postgres" ? "postgres" : connType === "clickhouse" ? "default" : "master"} />
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>{connType === "minio" ? "Access Key" : "Username"}</Label>
-              <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={connType === "minio" ? "minioadmin" : connType === "postgres" ? "postgres" : "sa"} />
+              <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={connType === "minio" ? "minioadmin" : connType === "postgres" ? "postgres" : connType === "clickhouse" ? "default" : "sa"} />
             </div>
             <div className="space-y-2">
               <Label>{connType === "minio" ? "Secret Key" : "Password"}</Label>
