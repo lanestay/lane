@@ -240,6 +240,19 @@ impl StoredConnection {
                     path_style,
                 })
             }
+            "clickhouse" => {
+                let opts: serde_json::Value =
+                    serde_json::from_str(&self.options_json).unwrap_or_default();
+                let secure = opts.get("secure").and_then(|v| v.as_bool());
+                ConnectionConfig::ClickHouse(ClickHouseConnectionConfig {
+                    host: self.host.clone(),
+                    port: self.port,
+                    database: self.database_name.clone(),
+                    user: self.username.clone(),
+                    password: self.password.clone(),
+                    secure,
+                })
+            }
             _ => {
                 let options: DbOptions =
                     serde_json::from_str(&self.options_json).unwrap_or_default();
@@ -324,6 +337,26 @@ impl StoredConnection {
                     username: c.access_key.clone(),
                     password: c.secret_key.clone(),
                     options_json: options.to_string(),
+                    sslmode: None,
+                    is_default: false,
+                    is_enabled: true,
+                }
+            }
+            ConnectionConfig::ClickHouse(c) => {
+                let options = if let Some(secure) = c.secure {
+                    serde_json::json!({"secure": secure}).to_string()
+                } else {
+                    "{}".to_string()
+                };
+                StoredConnection {
+                    name: nc.name.clone(),
+                    conn_type: "clickhouse".to_string(),
+                    host: c.host.clone(),
+                    port: c.port,
+                    database_name: c.database.clone(),
+                    username: c.user.clone(),
+                    password: c.password.clone(),
+                    options_json: options,
                     sslmode: None,
                     is_default: false,
                     is_enabled: true,
@@ -617,7 +650,7 @@ impl AccessControlDb {
 
             CREATE TABLE IF NOT EXISTS connections (
                 name TEXT PRIMARY KEY,
-                conn_type TEXT NOT NULL CHECK(conn_type IN ('mssql', 'postgres', 'duckdb', 'minio')),
+                conn_type TEXT NOT NULL CHECK(conn_type IN ('mssql', 'postgres', 'duckdb', 'minio', 'clickhouse')),
                 host TEXT NOT NULL,
                 port INTEGER NOT NULL,
                 database_name TEXT NOT NULL,
@@ -1027,7 +1060,7 @@ impl AccessControlDb {
                     ALTER TABLE connections RENAME TO connections_old;
                     CREATE TABLE connections (
                         name TEXT PRIMARY KEY,
-                        conn_type TEXT NOT NULL CHECK(conn_type IN ('mssql', 'postgres', 'duckdb')),
+                        conn_type TEXT NOT NULL CHECK(conn_type IN ('mssql', 'postgres', 'duckdb', 'clickhouse')),
                         host TEXT NOT NULL,
                         port INTEGER NOT NULL,
                         database_name TEXT NOT NULL,
@@ -1065,7 +1098,7 @@ impl AccessControlDb {
                     ALTER TABLE connections RENAME TO connections_old;
                     CREATE TABLE connections (
                         name TEXT PRIMARY KEY,
-                        conn_type TEXT NOT NULL CHECK(conn_type IN ('mssql', 'postgres', 'duckdb', 'minio')),
+                        conn_type TEXT NOT NULL CHECK(conn_type IN ('mssql', 'postgres', 'duckdb', 'minio', 'clickhouse')),
                         host TEXT NOT NULL,
                         port INTEGER NOT NULL,
                         database_name TEXT NOT NULL,

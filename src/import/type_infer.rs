@@ -125,17 +125,17 @@ fn is_datetime(s: &str) -> bool {
 pub fn sql_type_for(t: &InferredType, dialect: Dialect) -> String {
     match (t, dialect) {
         (InferredType::Boolean, Dialect::Mssql) => "BIT".to_string(),
-        (InferredType::Boolean, Dialect::Postgres | Dialect::DuckDb) => "BOOLEAN".to_string(),
+        (InferredType::Boolean, Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse) => "BOOLEAN".to_string(),
         (InferredType::Integer, Dialect::Mssql) => "BIGINT".to_string(),
-        (InferredType::Integer, Dialect::Postgres | Dialect::DuckDb) => "BIGINT".to_string(),
+        (InferredType::Integer, Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse) => "BIGINT".to_string(),
         (InferredType::Float, Dialect::Mssql) => "FLOAT".to_string(),
-        (InferredType::Float, Dialect::Postgres | Dialect::DuckDb) => "DOUBLE PRECISION".to_string(),
+        (InferredType::Float, Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse) => "DOUBLE PRECISION".to_string(),
         (InferredType::Date, Dialect::Mssql) => "DATE".to_string(),
-        (InferredType::Date, Dialect::Postgres | Dialect::DuckDb) => "DATE".to_string(),
+        (InferredType::Date, Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse) => "DATE".to_string(),
         (InferredType::DateTime, Dialect::Mssql) => "DATETIME2".to_string(),
-        (InferredType::DateTime, Dialect::Postgres | Dialect::DuckDb) => "TIMESTAMP".to_string(),
+        (InferredType::DateTime, Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse) => "TIMESTAMP".to_string(),
         (InferredType::Text, Dialect::Mssql) => "NVARCHAR(MAX)".to_string(),
-        (InferredType::Text, Dialect::Postgres | Dialect::DuckDb) => "TEXT".to_string(),
+        (InferredType::Text, Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse) => "TEXT".to_string(),
     }
 }
 

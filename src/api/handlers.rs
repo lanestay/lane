@@ -1819,6 +1819,7 @@ pub async fn list_tables_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1858,6 +1859,7 @@ pub async fn describe_table_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1897,6 +1899,7 @@ pub async fn list_views_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1936,6 +1939,7 @@ pub async fn list_routines_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1975,6 +1979,7 @@ pub async fn get_object_definition_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -2016,6 +2021,7 @@ pub async fn list_triggers_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -2055,6 +2061,7 @@ pub async fn get_trigger_definition_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -2096,6 +2103,7 @@ pub async fn get_related_objects_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -2162,6 +2170,7 @@ pub async fn list_rls_policies_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -2202,6 +2211,7 @@ pub async fn get_rls_status_handler(
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -2274,13 +2284,14 @@ pub async fn generate_rls_sql_handler(
         }
     };
 
-    if db.dialect() == crate::db::Dialect::DuckDb {
-        return request_error("UNSUPPORTED", "RLS not supported for DuckDB connections", None)
+    if matches!(db.dialect(), crate::db::Dialect::DuckDb | crate::db::Dialect::ClickHouse) {
+        return request_error("UNSUPPORTED", "RLS not supported for this connection type", None)
             .to_response(StatusCode::BAD_REQUEST);
     }
 
     let default_schema = match db.dialect() {
         crate::db::Dialect::Postgres => "public",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = params.schema.as_deref().unwrap_or(default_schema);

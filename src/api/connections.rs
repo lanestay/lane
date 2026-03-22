@@ -143,6 +143,7 @@ fn default_port(conn_type: &str) -> u16 {
         "postgres" => 5432,
         "duckdb" => 0,
         "minio" => 9000,
+        "clickhouse" => 8123,
         _ => 1433,
     }
 }
@@ -193,11 +194,11 @@ pub async fn create_connection_handler(
         Err(resp) => return resp,
     };
 
-    let allowed_types = ["mssql", "postgres", "duckdb", "minio"];
+    let allowed_types = ["mssql", "postgres", "duckdb", "minio", "clickhouse"];
     if !allowed_types.contains(&body.conn_type.as_str()) {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "type must be 'mssql', 'postgres', 'duckdb', or 'minio'"})),
+            Json(json!({"error": "type must be 'mssql', 'postgres', 'duckdb', 'minio', or 'clickhouse'"})),
         )
             .into_response();
     }
@@ -479,11 +480,11 @@ pub async fn test_inline_connection_handler(
         return resp;
     }
 
-    let allowed_types = ["mssql", "postgres", "duckdb", "minio"];
+    let allowed_types = ["mssql", "postgres", "duckdb", "minio", "clickhouse"];
     if !allowed_types.contains(&body.conn_type.as_str()) {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "type must be 'mssql', 'postgres', 'duckdb', or 'minio'"})),
+            Json(json!({"error": "type must be 'mssql', 'postgres', 'duckdb', 'minio', or 'clickhouse'"})),
         )
             .into_response();
     }
@@ -604,6 +605,7 @@ pub async fn connections_health_handler(
         crate::db::Dialect::Mssql => "mssql",
         crate::db::Dialect::Postgres => "postgres",
         crate::db::Dialect::DuckDb => "duckdb",
+        crate::db::Dialect::ClickHouse => "clickhouse",
     };
 
     let connections: Vec<serde_json::Value> = infos

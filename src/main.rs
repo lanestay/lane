@@ -401,6 +401,15 @@ pub(crate) async fn create_backend(
         ConnectionConfig::Minio(_) => {
             anyhow::bail!("MinIO/S3 connections are not database backends");
         }
+        #[cfg(feature = "clickhouse_backend")]
+        ConnectionConfig::ClickHouse(cfg) => {
+            let backend = db::clickhouse_backend::ClickHouseBackend::new(cfg.clone()).await?;
+            Ok(Arc::new(backend))
+        }
+        #[cfg(not(feature = "clickhouse_backend"))]
+        ConnectionConfig::ClickHouse(_) => {
+            anyhow::bail!("ClickHouse feature is not enabled. Compile with --features clickhouse_backend");
+        }
     }
 }
 

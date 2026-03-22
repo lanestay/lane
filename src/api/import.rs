@@ -214,6 +214,7 @@ pub async fn preview_handler(
     let _schema = schema.unwrap_or_else(|| match dialect {
         crate::db::Dialect::Mssql => "dbo".to_string(),
         crate::db::Dialect::DuckDb => "main".to_string(),
+        crate::db::Dialect::ClickHouse => "default".to_string(),
         crate::db::Dialect::Postgres => "public".to_string(),
     });
 
@@ -348,6 +349,7 @@ pub async fn execute_handler(
     let schema = req.schema.unwrap_or_else(|| match dialect {
         crate::db::Dialect::Mssql => "dbo".to_string(),
         crate::db::Dialect::DuckDb => "main".to_string(),
+        crate::db::Dialect::ClickHouse => "default".to_string(),
         crate::db::Dialect::Postgres => "public".to_string(),
     });
 

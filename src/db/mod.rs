@@ -9,6 +9,9 @@ pub mod postgres;
 #[cfg(feature = "duckdb_backend")]
 pub mod duckdb_backend;
 
+#[cfg(feature = "clickhouse_backend")]
+pub mod clickhouse_backend;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -29,6 +32,7 @@ pub enum Dialect {
     Mssql,
     Postgres,
     DuckDb,
+    ClickHouse,
 }
 
 /// Live connection status.

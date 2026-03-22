@@ -137,7 +137,7 @@ pub fn create_paginated_query(
     } else if allow_unstable {
         match dialect {
             Dialect::Mssql => "(SELECT NULL)".to_string(),
-            Dialect::Postgres | Dialect::DuckDb => "1".to_string(),
+            Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => "1".to_string(),
         }
     } else {
         return Err(anyhow::anyhow!(
@@ -174,7 +174,7 @@ pub fn create_paginated_query(
                  OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
                 stripped_query, order_clause, offset, batch_size
             ),
-            Dialect::Postgres | Dialect::DuckDb => format!(
+            Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => format!(
                 "SELECT * FROM ({}) AS __subquery \
                  ORDER BY {} \
                  LIMIT {} OFFSET {}",
@@ -197,7 +197,7 @@ pub fn create_paginated_query(
                     return Err(anyhow::anyhow!("ORDER BY required for pagination"));
                 }
             }
-            Dialect::Postgres | Dialect::DuckDb => {
+            Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => {
                 if has_order_by(query) {
                     format!("{} LIMIT {} OFFSET {}", query, batch_size, offset)
                 } else if !order_clause.is_empty() {

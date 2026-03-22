@@ -56,6 +56,7 @@ pub fn dialect_label(dialect: Dialect) -> String {
         Dialect::Mssql => "T-SQL (Microsoft SQL Server)".to_string(),
         Dialect::Postgres => "PostgreSQL".to_string(),
         Dialect::DuckDb => "DuckDB SQL".to_string(),
+        Dialect::ClickHouse => "ClickHouse SQL".to_string(),
     }
 }
 

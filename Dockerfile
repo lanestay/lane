@@ -13,7 +13,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 COPY --from=ui-builder /app/ui/dist/ ui/dist/
-RUN cargo build --release --features webui,postgres,duckdb_backend,storage
+RUN cargo build --release --features webui,postgres,duckdb_backend,clickhouse_backend,storage
 
 # ── Stage 3: Minimal runtime image ──────────────────────────────────────────
 FROM debian:trixie-slim

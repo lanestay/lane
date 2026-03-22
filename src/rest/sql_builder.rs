@@ -79,7 +79,7 @@ pub fn build_select(
                 ));
             }
         }
-        Dialect::Postgres | Dialect::DuckDb => {
+        Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => {
             if let Some(limit) = query.limit {
                 sql.push_str(&format!(" LIMIT {}", limit));
             }
@@ -151,7 +151,7 @@ pub fn build_insert(
 
     // Postgres/DuckDb: RETURNING *
     match dialect {
-        Dialect::Postgres | Dialect::DuckDb => {
+        Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => {
             sql.push_str(" RETURNING *");
         }
         Dialect::Mssql => {
@@ -191,7 +191,7 @@ pub fn build_update(
         .collect();
 
     match dialect {
-        Dialect::Postgres | Dialect::DuckDb => {
+        Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => {
             format!(
                 "UPDATE {}.{} SET {} WHERE {} = {} RETURNING *",
                 schema_id,
@@ -290,7 +290,7 @@ fn filter_to_condition(filter: &RestFilter, dialect: Dialect) -> String {
         FilterOp::Ilike => {
             match dialect {
                 // Postgres has native ILIKE
-                Dialect::Postgres | Dialect::DuckDb => {
+                Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => {
                     format!("{} ILIKE {}", col, sql_literal(&filter.value))
                 }
                 // MSSQL is case-insensitive by default collation, so just LIKE
@@ -345,7 +345,7 @@ fn value_to_sql_literal(val: &Value, dialect: Dialect) -> String {
     match val {
         Value::Null => "NULL".to_string(),
         Value::Bool(b) => match dialect {
-            Dialect::Postgres | Dialect::DuckDb => {
+            Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => {
                 if *b { "TRUE".to_string() } else { "FALSE".to_string() }
             }
             Dialect::Mssql => {
