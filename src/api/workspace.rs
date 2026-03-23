@@ -851,6 +851,37 @@ pub async fn import_query_handler(
         return resp;
     }
 
+    // Check connection-level access
+    if let Some(ref access_db) = state.access_db {
+        let conn_name = req.connection.as_deref().unwrap_or("");
+        if !conn_name.is_empty() {
+            match &auth {
+                AuthResult::ServiceAccountAccess { account_name } => {
+                    if !access_db.check_sa_connection_access(account_name, conn_name) {
+                        return request_error(
+                            "FORBIDDEN",
+                            &format!("Access denied to connection '{}'", conn_name),
+                            None,
+                        )
+                        .to_response(StatusCode::FORBIDDEN);
+                    }
+                }
+                _ => {
+                    if let Some(email) = extract_email(&auth) {
+                        if !access_db.check_connection_access(email, conn_name) {
+                            return request_error(
+                                "FORBIDDEN",
+                                &format!("Access denied to connection '{}'", conn_name),
+                                None,
+                            )
+                            .to_response(StatusCode::FORBIDDEN);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let ws = match get_workspace(&state) {
         Ok(ws) => ws,
         Err(resp) => return resp,
