@@ -92,7 +92,9 @@ Body: { "email": "...", "password": "..." }
 Response: { "session_token": "...", "email": "...", "is_admin": true }
 ```
 
-Sets `HttpOnly`, `SameSite=Strict` cookie with 24h expiry.
+Sets `HttpOnly`, `SameSite=Strict`, `Secure` cookie with 24h expiry.
+
+> **Cookie security**: Session cookies include the `Secure` flag by default, requiring HTTPS. Set `LANE_SECURE_COOKIES=false` for local development or Tailscale-only networks where TLS is not configured (e.g. no Tailscale Serve, no reverse proxy with SSL, no self-signed cert).
 
 ### Email Code Login (Passwordless)
 

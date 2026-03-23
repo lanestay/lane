@@ -15,6 +15,35 @@ use crate::api::AppState;
 use crate::auth::{authenticate, extract_session_token, extract_tailscale_identity, AuthProvider, AuthResult};
 
 // ============================================================================
+// Cookie helpers
+// ============================================================================
+
+/// Build a session cookie string with the Secure flag based on LANE_SECURE_COOKIES.
+/// Defaults to Secure (recommended). Set LANE_SECURE_COOKIES=false for local dev
+/// or Tailscale-only networks without TLS.
+fn session_cookie(token: &str, same_site: &str) -> String {
+    let secure = std::env::var("LANE_SECURE_COOKIES")
+        .map(|v| v != "false")
+        .unwrap_or(true);
+    let secure_flag = if secure { "; Secure" } else { "" };
+    format!(
+        "session={}; HttpOnly; SameSite={}; Path=/; Max-Age=86400{}",
+        token, same_site, secure_flag
+    )
+}
+
+fn clear_session_cookie() -> String {
+    let secure = std::env::var("LANE_SECURE_COOKIES")
+        .map(|v| v != "false")
+        .unwrap_or(true);
+    let secure_flag = if secure { "; Secure" } else { "" };
+    format!(
+        "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{}",
+        secure_flag
+    )
+}
+
+// ============================================================================
 // Login rate limiter — tracks failed login attempts per IP
 // ============================================================================
 
@@ -359,10 +388,7 @@ pub async fn login_handler(
     let is_admin = access_db.is_admin(&body.email);
 
     // Set cookie + return token in body
-    let cookie = format!(
-        "session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-        token
-    );
+    let cookie = session_cookie(&token, "Strict");
 
     (
         StatusCode::OK,
@@ -391,7 +417,7 @@ pub async fn logout_handler(
         }
     }
 
-    let clear_cookie = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+    let clear_cookie = clear_session_cookie();
 
     (
         StatusCode::OK,
@@ -559,10 +585,7 @@ pub async fn tailscale_login_handler(
 
     let is_admin = access_db.is_admin(&email);
 
-    let cookie = format!(
-        "session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-        token
-    );
+    let cookie = session_cookie(&token, "Strict");
 
     (
         StatusCode::OK,
@@ -891,10 +914,7 @@ pub async fn oidc_callback_handler(
     };
 
     // Set cookie with SameSite=Lax (required for cross-origin redirect from provider)
-    let cookie = format!(
-        "session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400",
-        session_token
-    );
+    let cookie = session_cookie(&session_token, "Lax");
 
     (
         StatusCode::TEMPORARY_REDIRECT,
@@ -1175,10 +1195,7 @@ pub async fn verify_email_code_handler(
 
     let is_admin = access_db.is_admin(&email);
 
-    let cookie = format!(
-        "session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400",
-        token
-    );
+    let cookie = session_cookie(&token, "Strict");
 
     (
         StatusCode::OK,
