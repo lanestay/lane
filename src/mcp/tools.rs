@@ -2738,143 +2738,41 @@ impl BatchQueryMcp {
             None => return json!({"error": true, "message": "Workspace is not available on this server"}).to_string(),
         };
 
-        // Validate table name (simple identifier check)
-        let table_name = &params.table_name;
-        if table_name.is_empty()
-            || table_name.starts_with("__")
-            || !table_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        // MCP-specific permission checks
+        if let Some(conn_name) = params.connection.as_deref() {
+            if let Some(ref ctx) = self.user_context {
+                if !ctx.access_db.check_connection_access(&ctx.email, conn_name) {
+                    return json!({"error": true, "message": format!("Access denied to connection '{}'", conn_name)}).to_string();
+                }
+            }
+        }
+
+        if let Some(ref db_name) = params.database {
+            if let Err(e) = self.check_permission(db_name, false) {
+                return e;
+            }
+        }
+
+        match crate::api::workspace::do_workspace_import(
+            &self.registry,
+            ws,
+            params.connection.as_deref(),
+            params.database.as_deref(),
+            &params.query,
+            &params.table_name,
+            params.if_exists.as_deref(),
+        )
+        .await
         {
-            return json!({"error": true, "message": "Invalid table name. Use only letters, numbers, and underscores. Must not start with '__'."}).to_string();
+            Ok(result) => json!({
+                "success": true,
+                "table_name": result.table_name,
+                "row_count": result.row_count,
+                "column_count": result.column_count,
+                "columns": result.columns
+            }).to_string(),
+            Err(e) => json!({"error": true, "message": e}).to_string(),
         }
-
-        // Resolve source connection and execute query
-        let db = match self.resolve_connection(params.connection.as_deref()) {
-            Ok(db) => db,
-            Err(e) => return e,
-        };
-
-        let database = params
-            .database
-            .unwrap_or_else(|| db.default_database().to_string());
-
-        // Permission check on source
-        if let Err(e) = self.check_permission(&database, false) {
-            return e;
-        }
-
-        // Only allow read queries for import
-        if is_write_query(&params.query) {
-            return json!({"error": true, "message": "Only SELECT/read queries can be imported into the workspace"}).to_string();
-        }
-
-        let qp = QueryParams {
-            database,
-            query: params.query,
-            include_metadata: true,
-            ..Default::default()
-        };
-
-        let result = match db.execute_query(&qp).await {
-            Ok(r) => r,
-            Err(e) => return json!({"error": true, "message": format!("Source query failed: {:#}", e)}).to_string(),
-        };
-
-        // Handle if_exists
-        let if_exists = params.if_exists.as_deref().unwrap_or("fail");
-        let table_exists = ws.query_count(
-            &format!("SELECT COUNT(*) FROM __workspace_meta WHERE table_name = '{}'", table_name)
-        ).await.unwrap_or(0) > 0;
-
-        if table_exists {
-            match if_exists {
-                "replace" => {
-                    let _ = ws.execute_sql(&format!("DROP TABLE IF EXISTS \"{}\"", table_name)).await;
-                    let _ = ws.execute_sql(&format!("DELETE FROM __workspace_meta WHERE table_name = '{}'", table_name)).await;
-                }
-                _ => {
-                    return json!({"error": true, "message": format!("Table '{}' already exists. Use if_exists='replace' to overwrite.", table_name)}).to_string();
-                }
-            }
-        }
-
-        // Build CREATE TABLE from metadata
-        let columns = match &result.metadata {
-            Some(meta) => &meta.columns,
-            None => {
-                return json!({"error": true, "message": "Source query returned no column metadata"}).to_string();
-            }
-        };
-
-        if columns.is_empty() {
-            return json!({"error": true, "message": "Source query returned no columns"}).to_string();
-        }
-
-        let col_defs: Vec<String> = columns.iter().map(|col| {
-            let duck_type = map_to_duckdb_type(&col.data_type);
-            format!("\"{}\" {}", col.name, duck_type)
-        }).collect();
-
-        let create_sql = format!("CREATE TABLE \"{}\" ({})", table_name, col_defs.join(", "));
-        if let Err(e) = ws.execute_sql(&create_sql).await {
-            return json!({"error": true, "message": format!("Failed to create workspace table: {:#}", e)}).to_string();
-        }
-
-        // Insert rows in batches
-        let col_names: Vec<String> = columns.iter().map(|c| format!("\"{}\"", c.name)).collect();
-        let col_names_str = col_names.join(", ");
-        let mut inserted = 0usize;
-
-        for chunk in result.data.chunks(500) {
-            if chunk.is_empty() { continue; }
-
-            let mut values_parts: Vec<String> = Vec::with_capacity(chunk.len());
-            for row in chunk {
-                let vals: Vec<String> = columns.iter().map(|col| {
-                    match row.get(&col.name) {
-                        None | Some(serde_json::Value::Null) => "NULL".to_string(),
-                        Some(serde_json::Value::Bool(b)) => b.to_string(),
-                        Some(serde_json::Value::Number(n)) => n.to_string(),
-                        Some(serde_json::Value::String(s)) => format!("'{}'", s.replace('\'', "''")),
-                        Some(other) => format!("'{}'", other.to_string().replace('\'', "''")),
-                    }
-                }).collect();
-                values_parts.push(format!("({})", vals.join(", ")));
-            }
-
-            let insert_sql = format!(
-                "INSERT INTO \"{}\" ({}) VALUES {}",
-                table_name, col_names_str, values_parts.join(", ")
-            );
-
-            if let Err(e) = ws.execute_sql(&insert_sql).await {
-                // Try to clean up on failure
-                let _ = ws.execute_sql(&format!("DROP TABLE IF EXISTS \"{}\"", table_name)).await;
-                return json!({"error": true, "message": format!("Failed to insert data: {:#}", e)}).to_string();
-            }
-            inserted += chunk.len();
-        }
-
-        // Update workspace metadata
-        let meta_sql = format!(
-            "INSERT INTO __workspace_meta (table_name, original_filename, row_count, column_count) VALUES ('{}', '{}', {}, {})",
-            table_name,
-            "query_import",
-            inserted,
-            columns.len()
-        );
-        let _ = ws.execute_sql(&meta_sql).await;
-
-        let col_info: Vec<serde_json::Value> = columns.iter().map(|c| {
-            json!({"name": c.name, "type": map_to_duckdb_type(&c.data_type)})
-        }).collect();
-
-        json!({
-            "success": true,
-            "table_name": table_name,
-            "row_count": inserted,
-            "column_count": columns.len(),
-            "columns": col_info
-        }).to_string()
     }
 
     async fn workspace_query_impl(&self, params: WorkspaceQueryParams) -> String {
@@ -3441,51 +3339,6 @@ fn sanitize_table_name(filename: &str) -> String {
         format!("t_{}", result)
     } else {
         result
-    }
-}
-
-// ============================================================================
-// Type mapping helper for workspace import
-// ============================================================================
-
-#[cfg(feature = "duckdb_backend")]
-fn map_to_duckdb_type(source_type: &str) -> &'static str {
-    let upper = source_type.to_uppercase();
-    match upper.as_str() {
-        // Integer types
-        "INT" | "INTEGER" | "INT4" => "INTEGER",
-        "BIGINT" | "INT8" => "BIGINT",
-        "SMALLINT" | "INT2" | "TINYINT" => "SMALLINT",
-
-        // Floating point
-        "FLOAT" | "REAL" | "FLOAT4" => "FLOAT",
-        "DOUBLE" | "FLOAT8" | "DOUBLE PRECISION" => "DOUBLE",
-
-        // Decimal/numeric
-        _ if upper.starts_with("DECIMAL") || upper.starts_with("NUMERIC") || upper.starts_with("MONEY") => "DOUBLE",
-
-        // String types
-        _ if upper.starts_with("VARCHAR") || upper.starts_with("NVARCHAR")
-            || upper.starts_with("CHAR") || upper.starts_with("NCHAR")
-            || upper.starts_with("TEXT") || upper.starts_with("NTEXT") => "VARCHAR",
-        "STRING" | "XML" | "UNIQUEIDENTIFIER" => "VARCHAR",
-
-        // Boolean
-        "BIT" | "BOOLEAN" | "BOOL" => "BOOLEAN",
-
-        // Date/time
-        "DATE" => "DATE",
-        "TIME" | "TIME WITHOUT TIME ZONE" => "TIME",
-        "TIMESTAMP" | "DATETIME" | "DATETIME2" | "SMALLDATETIME"
-            | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",
-        _ if upper.starts_with("TIMESTAMP") || upper.starts_with("DATETIME") => "TIMESTAMP",
-        "DATETIMEOFFSET" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => "TIMESTAMP",
-
-        // Binary
-        _ if upper.starts_with("BINARY") || upper.starts_with("VARBINARY") || upper == "IMAGE" => "BLOB",
-
-        // Default fallback
-        _ => "VARCHAR",
     }
 }
 
