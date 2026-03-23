@@ -24,11 +24,37 @@ Requires the `duckdb_backend` feature flag.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/lane/workspace/tables` | GET | List workspace tables |
+| `/api/lane/workspace/import-query` | POST | Import query results from any connection |
 | `/api/lane/workspace/query` | POST | Execute SQL against workspace |
 | `/api/lane/workspace/import/preview` | POST | Preview import (schema + sample) |
 | `/api/lane/workspace/import/execute` | POST | Execute import |
 | `/api/lane/workspace/export/{table}` | GET | Export table (format query param) |
 | `/api/lane/workspace/tables/{table}` | DELETE | Drop workspace table |
+
+## Cross-Connection Import
+
+Import query results from any database connection (MSSQL, Postgres, ClickHouse) into a workspace table:
+
+```
+POST /api/lane/workspace/import-query
+{
+  "connection": "clickhouse",
+  "database": "default",
+  "query": "SELECT * FROM trips LIMIT 10000",
+  "table_name": "trips",
+  "if_exists": "replace"
+}
+```
+
+- `connection` — name of the source connection (optional, uses default)
+- `database` — database on the source connection (optional, uses connection default)
+- `query` — must be a SELECT/read-only query
+- `table_name` — name for the workspace table
+- `if_exists` — `"replace"` to overwrite, or omit to fail if table exists
+
+**Auth requirements:** authenticated + supervised SQL mode + connection-level access to the source.
+
+Once imported, tables from different connections can be joined in the workspace via `/workspace/query`.
 
 ## MCP Tools
 
