@@ -105,13 +105,14 @@ impl ClickHouseBackend {
     }
 
     /// Execute a query and return rows as JSON maps.
-    async fn query_rows(
+    /// Query ClickHouse using `FORMAT JSON`, returning rows and column metadata.
+    async fn query_json(
         &self,
         database: &str,
         sql: &str,
-    ) -> Result<Vec<HashMap<String, Value>>> {
+    ) -> Result<(Vec<HashMap<String, Value>>, Vec<ColumnMeta>)> {
         let trimmed = sql.trim().trim_end_matches(';');
-        let body = format!("{} FORMAT JSONEachRow", trimmed);
+        let body = format!("{} FORMAT JSON", trimmed);
 
         let resp = self
             .http
@@ -131,18 +132,43 @@ impl ClickHouseBackend {
             return Err(anyhow::anyhow!("{}", text.trim()));
         }
 
-        // Parse newline-delimited JSON
-        let mut rows = Vec::new();
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let row: HashMap<String, Value> =
-                serde_json::from_str(line).context("Failed to parse ClickHouse JSON row")?;
-            rows.push(row);
-        }
+        let parsed: Value = serde_json::from_str(&text)
+            .context("Failed to parse ClickHouse JSON response")?;
 
+        let columns = parsed.get("meta")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|col| {
+                        let name = col.get("name")?.as_str()?.to_string();
+                        let data_type = col.get("type")?.as_str()?.to_string();
+                        Some(ColumnMeta { name, data_type })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let rows = parsed.get("data")
+            .and_then(|d| d.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|row| {
+                        serde_json::from_value::<HashMap<String, Value>>(row.clone()).ok()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok((rows, columns))
+    }
+
+    /// Convenience wrapper returning only rows.
+    async fn query_rows(
+        &self,
+        database: &str,
+        sql: &str,
+    ) -> Result<Vec<HashMap<String, Value>>> {
+        let (rows, _) = self.query_json(database, sql).await?;
         Ok(rows)
     }
 
@@ -237,7 +263,7 @@ impl DatabaseBackend for ClickHouseBackend {
                 Dialect::ClickHouse,
             )?;
 
-            let mut data = self.query_rows(&params.database, &paginated_sql).await?;
+            let (mut data, columns) = self.query_json(&params.database, &paginated_sql).await?;
 
             for row in &mut data {
                 crate::pii::process_json_row(&pii_processor, row);
@@ -249,6 +275,16 @@ impl DatabaseBackend for ClickHouseBackend {
                     row.remove(ROW_NUMBER_ALIAS);
                 }
             }
+
+            let metadata = if params.include_metadata && !columns.is_empty() {
+                let filtered: Vec<ColumnMeta> = columns
+                    .into_iter()
+                    .filter(|c| c.name != ROW_NUMBER_ALIAS)
+                    .collect();
+                Some(QueryMetadata { columns: filtered })
+            } else {
+                None
+            };
 
             let elapsed = start.elapsed().as_millis();
             let effective_total = if total_rows > 0 {
@@ -269,22 +305,14 @@ impl DatabaseBackend for ClickHouseBackend {
                 data,
                 result_sets: None,
                 result_set_count: None,
-                metadata: None,
+                metadata,
             });
         }
 
         // Standard buffered path
-        let mut data = self.query_rows(&params.database, &params.query).await?;
+        let (mut data, columns) = self.query_json(&params.database, &params.query).await?;
 
-        // Build metadata from first row
-        let metadata = if params.include_metadata && !data.is_empty() {
-            let columns: Vec<ColumnMeta> = data[0]
-                .keys()
-                .map(|k| ColumnMeta {
-                    name: k.clone(),
-                    data_type: "String".to_string(),
-                })
-                .collect();
+        let metadata = if params.include_metadata && !columns.is_empty() {
             Some(QueryMetadata { columns })
         } else {
             None
