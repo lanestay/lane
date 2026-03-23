@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use crate::auth::{self, AuthResult};
 use crate::auth::access_control::SqlMode;
-use crate::db::DatabaseBackend;
+use crate::db::{ConnectionRegistry, DatabaseBackend};
 use crate::query::QueryParams;
+use crate::query::validation::is_read_only_safe;
 
 use super::errors::*;
 use super::AppState;
@@ -612,4 +613,298 @@ pub async fn list_files_handler(
     }
 
     (StatusCode::OK, Json(json!({ "files": files }))).into_response()
+}
+
+// ============================================================================
+// Type Mapping
+// ============================================================================
+
+/// Map a source database column type to a DuckDB type.
+pub fn map_to_duckdb_type(source_type: &str) -> &'static str {
+    let upper = source_type.to_uppercase();
+    match upper.as_str() {
+        // Integer types
+        "INT" | "INTEGER" | "INT4" => "INTEGER",
+        "BIGINT" | "INT8" => "BIGINT",
+        "SMALLINT" | "INT2" | "TINYINT" => "SMALLINT",
+
+        // Floating point
+        "FLOAT" | "REAL" | "FLOAT4" => "FLOAT",
+        "DOUBLE" | "FLOAT8" | "DOUBLE PRECISION" => "DOUBLE",
+
+        // Decimal/numeric
+        _ if upper.starts_with("DECIMAL") || upper.starts_with("NUMERIC") || upper.starts_with("MONEY") => "DOUBLE",
+
+        // String types
+        _ if upper.starts_with("VARCHAR") || upper.starts_with("NVARCHAR")
+            || upper.starts_with("CHAR") || upper.starts_with("NCHAR")
+            || upper.starts_with("TEXT") || upper.starts_with("NTEXT") => "VARCHAR",
+        "STRING" | "XML" | "UNIQUEIDENTIFIER" => "VARCHAR",
+
+        // Boolean
+        "BIT" | "BOOLEAN" | "BOOL" => "BOOLEAN",
+
+        // Date/time
+        "DATE" => "DATE",
+        "TIME" | "TIME WITHOUT TIME ZONE" => "TIME",
+        "TIMESTAMP" | "DATETIME" | "DATETIME2" | "SMALLDATETIME"
+            | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",
+        _ if upper.starts_with("TIMESTAMP") || upper.starts_with("DATETIME") => "TIMESTAMP",
+        "DATETIMEOFFSET" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => "TIMESTAMP",
+
+        // Binary
+        _ if upper.starts_with("BINARY") || upper.starts_with("VARBINARY") || upper == "IMAGE" => "BLOB",
+
+        // Default fallback
+        _ => "VARCHAR",
+    }
+}
+
+// ============================================================================
+// Workspace Import (shared logic)
+// ============================================================================
+
+/// Result of a workspace import operation.
+#[derive(Debug, serde::Serialize)]
+pub struct ImportResult {
+    pub table_name: String,
+    pub row_count: usize,
+    pub column_count: usize,
+    pub columns: Vec<serde_json::Value>,
+}
+
+/// Import the result of a query from a source connection into the DuckDB workspace.
+pub async fn do_workspace_import(
+    registry: &ConnectionRegistry,
+    ws: &crate::db::duckdb_backend::DuckDbBackend,
+    connection: Option<&str>,
+    database: Option<&str>,
+    query: &str,
+    table_name: &str,
+    if_exists: Option<&str>,
+) -> Result<ImportResult, String> {
+    // Validate table name
+    if table_name.is_empty()
+        || table_name.starts_with("__")
+        || !table_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    {
+        return Err("Invalid table name. Use only letters, numbers, and underscores. Must not start with '__'.".to_string());
+    }
+
+    // Only allow read queries
+    if !is_read_only_safe(query) {
+        return Err("Only SELECT/read queries can be imported into the workspace".to_string());
+    }
+
+    // Resolve source connection
+    let db = registry.resolve(connection).map_err(|e| format!("{}", e))?;
+
+    let database = database
+        .map(|d| d.to_string())
+        .unwrap_or_else(|| db.default_database().to_string());
+
+    let qp = QueryParams {
+        database,
+        query: query.to_string(),
+        include_metadata: true,
+        ..Default::default()
+    };
+
+    let result = db.execute_query(&qp).await
+        .map_err(|e| format!("Source query failed: {:#}", e))?;
+
+    // Handle if_exists
+    let if_exists = if_exists.unwrap_or("fail");
+    let table_exists = ws
+        .query_count(&format!(
+            "SELECT COUNT(*) FROM __workspace_meta WHERE table_name = '{}'",
+            table_name
+        ))
+        .await
+        .unwrap_or(0)
+        > 0;
+
+    if table_exists {
+        match if_exists {
+            "replace" => {
+                let _ = ws.execute_sql(&format!("DROP TABLE IF EXISTS \"{}\"", table_name)).await;
+                let _ = ws.execute_sql(&format!(
+                    "DELETE FROM __workspace_meta WHERE table_name = '{}'",
+                    table_name
+                )).await;
+            }
+            _ => {
+                return Err(format!(
+                    "Table '{}' already exists. Use if_exists='replace' to overwrite.",
+                    table_name
+                ));
+            }
+        }
+    }
+
+    // Build CREATE TABLE from metadata
+    let columns = match &result.metadata {
+        Some(meta) => &meta.columns,
+        None => return Err("Source query returned no column metadata".to_string()),
+    };
+
+    if columns.is_empty() {
+        return Err("Source query returned no columns".to_string());
+    }
+
+    let col_defs: Vec<String> = columns
+        .iter()
+        .map(|col| {
+            let duck_type = map_to_duckdb_type(&col.data_type);
+            format!("\"{}\" {}", col.name, duck_type)
+        })
+        .collect();
+
+    let create_sql = format!("CREATE TABLE \"{}\" ({})", table_name, col_defs.join(", "));
+    ws.execute_sql(&create_sql)
+        .await
+        .map_err(|e| format!("Failed to create workspace table: {:#}", e))?;
+
+    // Insert rows in batches
+    let col_names: Vec<String> = columns.iter().map(|c| format!("\"{}\"", c.name)).collect();
+    let col_names_str = col_names.join(", ");
+    let mut inserted = 0usize;
+
+    for chunk in result.data.chunks(500) {
+        if chunk.is_empty() {
+            continue;
+        }
+
+        let mut values_parts: Vec<String> = Vec::with_capacity(chunk.len());
+        for row in chunk {
+            let vals: Vec<String> = columns
+                .iter()
+                .map(|col| match row.get(&col.name) {
+                    None | Some(serde_json::Value::Null) => "NULL".to_string(),
+                    Some(serde_json::Value::Bool(b)) => b.to_string(),
+                    Some(serde_json::Value::Number(n)) => n.to_string(),
+                    Some(serde_json::Value::String(s)) => {
+                        format!("'{}'", s.replace('\'', "''"))
+                    }
+                    Some(other) => format!("'{}'", other.to_string().replace('\'', "''")),
+                })
+                .collect();
+            values_parts.push(format!("({})", vals.join(", ")));
+        }
+
+        let insert_sql = format!(
+            "INSERT INTO \"{}\" ({}) VALUES {}",
+            table_name, col_names_str, values_parts.join(", ")
+        );
+
+        if let Err(e) = ws.execute_sql(&insert_sql).await {
+            let _ = ws.execute_sql(&format!("DROP TABLE IF EXISTS \"{}\"", table_name)).await;
+            return Err(format!("Failed to insert data: {:#}", e));
+        }
+        inserted += chunk.len();
+    }
+
+    // Update workspace metadata
+    let meta_sql = format!(
+        "INSERT INTO __workspace_meta (table_name, original_filename, row_count, column_count) VALUES ('{}', '{}', {}, {})",
+        table_name, "query_import", inserted, columns.len()
+    );
+    let _ = ws.execute_sql(&meta_sql).await;
+
+    let col_info: Vec<serde_json::Value> = columns
+        .iter()
+        .map(|c| json!({"name": c.name, "type": map_to_duckdb_type(&c.data_type)}))
+        .collect();
+
+    Ok(ImportResult {
+        table_name: table_name.to_string(),
+        row_count: inserted,
+        column_count: columns.len(),
+        columns: col_info,
+    })
+}
+
+// ============================================================================
+// Import Query REST Handler
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ImportQueryRequest {
+    pub connection: Option<String>,
+    pub database: Option<String>,
+    pub query: String,
+    pub table_name: String,
+    pub if_exists: Option<String>,
+}
+
+pub async fn import_query_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ImportQueryRequest>,
+) -> Response {
+    let auth = auth::authenticate(&headers, &state).await;
+    if let AuthResult::Denied(reason) = &auth {
+        return request_error("UNAUTHORIZED", reason, None)
+            .to_response(StatusCode::UNAUTHORIZED);
+    }
+    if let Err(resp) = require_write_mode(&auth, &state) {
+        return resp;
+    }
+
+    // Check connection-level access
+    if let Some(ref access_db) = state.access_db {
+        let conn_name = req.connection.as_deref().unwrap_or("");
+        if !conn_name.is_empty() {
+            match &auth {
+                AuthResult::ServiceAccountAccess { account_name } => {
+                    if !access_db.check_sa_connection_access(account_name, conn_name) {
+                        return request_error(
+                            "FORBIDDEN",
+                            &format!("Access denied to connection '{}'", conn_name),
+                            None,
+                        )
+                        .to_response(StatusCode::FORBIDDEN);
+                    }
+                }
+                _ => {
+                    if let Some(email) = extract_email(&auth) {
+                        if !access_db.check_connection_access(email, conn_name) {
+                            return request_error(
+                                "FORBIDDEN",
+                                &format!("Access denied to connection '{}'", conn_name),
+                                None,
+                            )
+                            .to_response(StatusCode::FORBIDDEN);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ws = match get_workspace(&state) {
+        Ok(ws) => ws,
+        Err(resp) => return resp,
+    };
+
+    match do_workspace_import(
+        &state.registry,
+        ws,
+        req.connection.as_deref(),
+        req.database.as_deref(),
+        &req.query,
+        &req.table_name,
+        req.if_exists.as_deref(),
+    )
+    .await
+    {
+        Ok(result) => (StatusCode::OK, Json(json!({
+            "table_name": result.table_name,
+            "row_count": result.row_count,
+            "column_count": result.column_count,
+            "columns": result.columns,
+        }))).into_response(),
+        Err(e) => request_error("IMPORT_FAILED", &e, None)
+            .to_response(StatusCode::BAD_REQUEST),
+    }
 }

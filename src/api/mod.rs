@@ -547,6 +547,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         let ws_limit = DefaultBodyLimit::max(100 * 1024 * 1024);
         app = app
             .route("/api/lane/workspace/upload", post(workspace::upload_handler).layer(ws_limit))
+            .route("/api/lane/workspace/import-query", post(workspace::import_query_handler))
             .route("/api/lane/workspace/tables", get(workspace::list_tables_handler))
             .route("/api/lane/workspace/tables/{name}", delete(workspace::delete_table_handler))
             .route("/api/lane/workspace/clear", post(workspace::clear_handler))
