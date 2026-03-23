@@ -32,7 +32,7 @@ const completionCompartment = new Compartment();
 const themeCompartment = new Compartment();
 
 function getDialect(d?: string) {
-  return d === "postgres" ? PostgreSQL : MSSQL;
+  return d === "postgres" || d === "clickhouse" || d === "duckdb" ? PostgreSQL : MSSQL;
 }
 
 function isDarkMode() {

@@ -29,6 +29,7 @@ pub fn list_connections(registry: &ConnectionRegistry) -> Vec<ConnectionMeta> {
                 Dialect::Mssql => "mssql",
                 Dialect::Postgres => "postgres",
                 Dialect::DuckDb => "duckdb",
+                Dialect::ClickHouse => "clickhouse",
             },
             default_database: info.default_database,
             status: info.status,

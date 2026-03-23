@@ -1202,6 +1202,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1257,6 +1258,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1299,6 +1301,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1331,6 +1334,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1363,6 +1367,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1396,6 +1401,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1428,6 +1434,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1461,6 +1468,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1493,6 +1501,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1525,6 +1534,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1554,12 +1564,13 @@ impl BatchQueryMcp {
             return e;
         }
 
-        if db.dialect() == crate::db::Dialect::DuckDb {
-            return json!({"error": "RLS not supported for DuckDB connections"}).to_string();
+        if matches!(db.dialect(), crate::db::Dialect::DuckDb | crate::db::Dialect::ClickHouse) {
+            return json!({"error": "RLS not supported for this connection type"}).to_string();
         }
 
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -1606,6 +1617,7 @@ impl BatchQueryMcp {
         let default_schema = match db.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         };
         let schema = params.schema.as_deref().unwrap_or(default_schema);
@@ -2936,6 +2948,7 @@ impl BatchQueryMcp {
         let schema = params.schema.unwrap_or_else(|| {
             match dialect {
                 crate::db::Dialect::Postgres => "public".to_string(),
+                crate::db::Dialect::ClickHouse => "default".to_string(),
                 _ => "dbo".to_string(),
             }
         });
@@ -3364,6 +3377,19 @@ fn map_duckdb_type_to_dialect(duckdb_type: &str, dialect: crate::db::Dialect) ->
             _ if upper.starts_with("DECIMAL") => upper.replace("DECIMAL", "NUMERIC"),
             _ if upper.starts_with("NUMERIC") => upper.clone(),
             _ => "TEXT".to_string(),
+        },
+        crate::db::Dialect::ClickHouse => match upper.as_str() {
+            "TINYINT" | "SMALLINT" | "INTEGER" | "INT" | "BIGINT" | "HUGEINT"
+            | "UTINYINT" | "USMALLINT" | "UINTEGER" | "UBIGINT" => "Int64".to_string(),
+            "FLOAT" | "REAL" => "Float64".to_string(),
+            "DOUBLE" | "DOUBLE PRECISION" => "Float64".to_string(),
+            "BOOLEAN" | "BOOL" => "Bool".to_string(),
+            "DATE" => "Date".to_string(),
+            "TIME" => "String".to_string(),
+            "TIMESTAMP" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => "DateTime".to_string(),
+            "BLOB" => "String".to_string(),
+            _ if upper.starts_with("DECIMAL") || upper.starts_with("NUMERIC") => upper.clone(),
+            _ => "String".to_string(),
         },
         crate::db::Dialect::DuckDb => upper.clone(), // shouldn't happen, guarded above
     }

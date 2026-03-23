@@ -100,6 +100,7 @@ fn default_schema(dialect: Dialect) -> &'static str {
     match dialect {
         Dialect::Postgres => "public",
         Dialect::DuckDb => "main",
+        Dialect::ClickHouse => "default",
         Dialect::Mssql => "dbo",
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "lane"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 authors = ["Thomas Brown"]
@@ -13,6 +13,7 @@ postgres = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:postgres-native-
 mcp = ["rmcp"]
 xlsx = ["rust_xlsxwriter"]
 duckdb_backend = ["duckdb"]
+clickhouse_backend = []
 storage = ["rust-s3"]
 webui = ["dep:rust-embed", "dep:mime_guess"]
 
@@ -80,8 +81,9 @@ rust_xlsxwriter = { version = "0.79", optional = true }
 # DuckDB (workspace backend)
 duckdb = { version = "=1.1.1", features = ["bundled"], optional = true }
 
-# HTTP client (webhooks)
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# HTTP client (webhooks + ClickHouse HTTP interface)
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 
 # OAuth2 (PKCE + token exchange)
 oauth2 = "5"

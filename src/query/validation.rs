@@ -173,7 +173,7 @@ pub fn apply_row_limit_dialect(query: &str, limit: usize, dialect: Dialect) -> S
             "SELECT TOP {} * FROM (\n{}\n) AS ai_subquery",
             limit, query
         ),
-        Dialect::Postgres | Dialect::DuckDb => format!(
+        Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => format!(
             "SELECT * FROM (\n{}\n) AS ai_subquery LIMIT {}",
             query, limit
         ),

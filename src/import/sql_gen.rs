@@ -6,7 +6,7 @@ use super::InferredColumn;
 pub fn escape_identifier(name: &str, dialect: Dialect) -> String {
     match dialect {
         Dialect::Mssql => format!("[{}]", name.replace(']', "]]")),
-        Dialect::Postgres | Dialect::DuckDb => format!("\"{}\"", name.replace('"', "\"\"")),
+        Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => format!("\"{}\"", name.replace('"', "\"\"")),
     }
 }
 
@@ -113,7 +113,7 @@ fn escape_value(val: &str, sql_type: &str, dialect: Dialect) -> String {
     let escaped = val.replace('\'', "''");
     match dialect {
         Dialect::Mssql => format!("N'{}'", escaped),
-        Dialect::Postgres | Dialect::DuckDb => format!("'{}'", escaped),
+        Dialect::Postgres | Dialect::DuckDb | Dialect::ClickHouse => format!("'{}'", escaped),
     }
 }
 

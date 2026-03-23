@@ -116,7 +116,7 @@ export async function fetchForeignKeys(
   dialect: Dialect,
   connection?: string,
 ): Promise<ForeignKeyInfo[]> {
-  const sql = dialect === "postgres" || dialect === "duckdb" ? fkSqlPostgres() : fkSqlMssql();
+  const sql = dialect === "postgres" || dialect === "duckdb" || dialect === "clickhouse" ? fkSqlPostgres() : fkSqlMssql();
   const result: QueryResult = await executeQuery(sql, database, connection);
   return result.data.map((row) => {
     const r = normalizeRow(row);
@@ -137,7 +137,7 @@ export async function fetchIndexes(
   dialect: Dialect,
   connection?: string,
 ): Promise<IndexInfo[]> {
-  const sql = dialect === "postgres" || dialect === "duckdb" ? indexSqlPostgres() : indexSqlMssql();
+  const sql = dialect === "postgres" || dialect === "duckdb" || dialect === "clickhouse" ? indexSqlPostgres() : indexSqlMssql();
   const result: QueryResult = await executeQuery(sql, database, connection);
   return result.data.map((row) => {
     const r = normalizeRow(row);

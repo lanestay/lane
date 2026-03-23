@@ -819,7 +819,12 @@ pub async fn inventory_handler(
             };
 
             // List tables for this database (use default schema)
-            let schema = if conn_type == "postgres" { "public" } else { "dbo" };
+            let schema = match conn_type {
+                "postgres" => "public",
+                "clickhouse" => "default",
+                "duckdb" => "main",
+                _ => "dbo",
+            };
             let tables = match crate::db::metadata::list_tables(db.as_ref(), db_name, schema).await {
                 Ok(t) => t
                     .into_iter()
@@ -1315,6 +1320,7 @@ pub async fn set_pii_column_handler(
         Ok(conn) => match conn.dialect() {
             crate::db::Dialect::Postgres => "public",
             crate::db::Dialect::DuckDb => "main",
+            crate::db::Dialect::ClickHouse => "default",
             _ => "dbo",
         },
         Err(_) => "dbo",
@@ -1506,13 +1512,14 @@ pub async fn discover_pii_columns_handler(
     let default_schema = match backend.dialect() {
         crate::db::Dialect::Postgres => "public",
         crate::db::Dialect::DuckDb => "main",
+        crate::db::Dialect::ClickHouse => "default",
         _ => "dbo",
     };
     let schema = body.schema.as_deref().unwrap_or(default_schema);
 
     // Build a SELECT TOP N / LIMIT N query
     let sample_query = match backend.dialect() {
-        crate::db::Dialect::Postgres | crate::db::Dialect::DuckDb => format!(
+        crate::db::Dialect::Postgres | crate::db::Dialect::DuckDb | crate::db::Dialect::ClickHouse => format!(
             "SELECT * FROM \"{}\".\"{}\" LIMIT {}",
             schema, body.table, sample_rows
         ),

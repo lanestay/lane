@@ -627,10 +627,18 @@ pub fn map_to_duckdb_type(source_type: &str) -> &'static str {
         "INT" | "INTEGER" | "INT4" => "INTEGER",
         "BIGINT" | "INT8" => "BIGINT",
         "SMALLINT" | "INT2" | "TINYINT" => "SMALLINT",
+        // ClickHouse integer types
+        "UINT8" | "UINT16" | "INT16" => "SMALLINT",
+        "UINT32" | "INT32" => "INTEGER",
+        "UINT64" | "INT64" => "BIGINT",
+        "UINT128" | "INT128" | "UINT256" | "INT256" => "BIGINT",
 
         // Floating point
         "FLOAT" | "REAL" | "FLOAT4" => "FLOAT",
         "DOUBLE" | "FLOAT8" | "DOUBLE PRECISION" => "DOUBLE",
+        // ClickHouse float types
+        "FLOAT32" => "FLOAT",
+        "FLOAT64" => "DOUBLE",
 
         // Decimal/numeric
         _ if upper.starts_with("DECIMAL") || upper.starts_with("NUMERIC") || upper.starts_with("MONEY") => "DOUBLE",
@@ -640,12 +648,15 @@ pub fn map_to_duckdb_type(source_type: &str) -> &'static str {
             || upper.starts_with("CHAR") || upper.starts_with("NCHAR")
             || upper.starts_with("TEXT") || upper.starts_with("NTEXT") => "VARCHAR",
         "STRING" | "XML" | "UNIQUEIDENTIFIER" => "VARCHAR",
+        // ClickHouse string types
+        _ if upper.starts_with("FIXEDSTRING") || upper.starts_with("ENUM") => "VARCHAR",
+        "UUID" => "VARCHAR",
 
         // Boolean
         "BIT" | "BOOLEAN" | "BOOL" => "BOOLEAN",
 
         // Date/time
-        "DATE" => "DATE",
+        "DATE" | "DATE32" => "DATE",
         "TIME" | "TIME WITHOUT TIME ZONE" => "TIME",
         "TIMESTAMP" | "DATETIME" | "DATETIME2" | "SMALLDATETIME"
             | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",

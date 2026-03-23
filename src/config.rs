@@ -106,6 +106,29 @@ fn default_true_val() -> bool {
     true
 }
 
+fn default_ch_port() -> u16 {
+    8123
+}
+
+fn default_ch_database() -> String {
+    "default".to_string()
+}
+
+/// ClickHouse connection configuration.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(not(feature = "clickhouse_backend"), allow(dead_code))]
+pub struct ClickHouseConnectionConfig {
+    pub host: String,
+    #[serde(default = "default_ch_port")]
+    pub port: u16,
+    #[serde(default = "default_ch_database")]
+    pub database: String,
+    pub user: String,
+    pub password: String,
+    #[serde(default)]
+    pub secure: Option<bool>,
+}
+
 /// Tagged union for connection configs.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -117,6 +140,7 @@ pub enum ConnectionConfig {
     DuckDb(DuckDbConnectionConfig),
     #[cfg(feature = "storage")]
     Minio(MinioConnectionConfig),
+    ClickHouse(ClickHouseConnectionConfig),
 }
 
 /// A named connection entry in the config file.
@@ -302,6 +326,7 @@ pub fn default_database(config: &AppConfig) -> String {
                     ConnectionConfig::DuckDb(c) => c.path.clone(),
                     #[cfg(feature = "storage")]
                     ConnectionConfig::Minio(_) => String::new(),
+                    ConnectionConfig::ClickHouse(c) => c.database.clone(),
                 };
             }
         }

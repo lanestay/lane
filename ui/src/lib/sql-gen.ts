@@ -3,7 +3,7 @@
 
 import type { ColumnInfo } from "./api";
 
-export type Dialect = "mssql" | "postgres" | "duckdb";
+export type Dialect = "mssql" | "postgres" | "duckdb" | "clickhouse";
 
 // ---------------------------------------------------------------------------
 // Filter & sort types
@@ -37,7 +37,7 @@ export interface SortSpec {
 
 /** Quote an identifier: MSSQL uses [brackets], Postgres/DuckDB use "double quotes". */
 export function quoteIdentifier(name: string, dialect: Dialect): string {
-  if (dialect === "postgres" || dialect === "duckdb") {
+  if (dialect === "postgres" || dialect === "duckdb" || dialect === "clickhouse") {
     return `"${name.replace(/"/g, '""')}"`;
   }
   return `[${name.replace(/\]/g, "]]")}]`;
@@ -188,16 +188,19 @@ function buildColumnFilterExpr(f: ColumnFilter, dialect: Dialect): string {
       return `${col} <= ${formatLiteral(f.value, f.dataType)}`;
     case "contains": {
       const pat = escapeLikeValue(f.value);
+      if (dialect === "clickhouse") return `${col} ILIKE '%${pat}%'`;
       if (dialect === "postgres" || dialect === "duckdb") return `${col}::TEXT ILIKE '%${pat}%'`;
       return `${col} LIKE '%${pat}%'`;
     }
     case "starts_with": {
       const pat = escapeLikeValue(f.value);
+      if (dialect === "clickhouse") return `${col} ILIKE '${pat}%'`;
       if (dialect === "postgres" || dialect === "duckdb") return `${col}::TEXT ILIKE '${pat}%'`;
       return `${col} LIKE '${pat}%'`;
     }
     case "ends_with": {
       const pat = escapeLikeValue(f.value);
+      if (dialect === "clickhouse") return `${col} ILIKE '%${pat}'`;
       if (dialect === "postgres" || dialect === "duckdb") return `${col}::TEXT ILIKE '%${pat}'`;
       return `${col} LIKE '%${pat}'`;
     }
@@ -222,6 +225,9 @@ export function generateWhereClause(
     const escaped = escapeLikeValue(term);
     const colExprs = displayColumns.map((col) => {
       const qcol = quoteIdentifier(col, dialect);
+      if (dialect === "clickhouse") {
+        return `${qcol} ILIKE '%${escaped}%'`;
+      }
       if (dialect === "postgres" || dialect === "duckdb") {
         return `${qcol}::TEXT ILIKE '%${escaped}%'`;
       }
@@ -259,7 +265,7 @@ export function buildPreviewQuery(
     ? ` ORDER BY ${quoteIdentifier(sort.column, dialect)} ${sort.direction}`
     : "";
 
-  if (dialect === "postgres" || dialect === "duckdb") {
+  if (dialect === "postgres" || dialect === "duckdb" || dialect === "clickhouse") {
     return `SELECT * FROM ${tableName}${whereClause ? ` WHERE ${whereClause}` : ""}${orderBy} LIMIT ${limit}`;
   }
   return `SELECT TOP ${limit} * FROM ${tableName}${whereClause ? ` WHERE ${whereClause}` : ""}${orderBy}`;

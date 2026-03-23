@@ -27,6 +27,13 @@ Lane supports multiple named database and storage connections, configured via a 
       "database": "analytics"
     },
     {
+      "name": "olap",
+      "connection_type": "clickhouse",
+      "host": "clickhouse.example.com",
+      "port": 8123,
+      "database": "default"
+    },
+    {
       "name": "local-files",
       "connection_type": "minio",
       "endpoint": "http://localhost:9000",
@@ -72,6 +79,34 @@ Lane supports multiple named database and storage connections, configured via a 
 | `user` | Yes | Username |
 | `password` | Yes | Password |
 | `database` | Yes | Database name |
+
+### ClickHouse
+
+- Backend: HTTP API with reqwest (uses `FORMAT JSON` for typed results)
+- OLAP-oriented — best for large-scale analytics, time-series, and aggregation queries
+- Database switching via `?database=` query parameter
+- Pagination: `LIMIT/OFFSET`
+- Row limits: `LIMIT N`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `host` | Yes | Server hostname |
+| `port` | No | HTTP port (default: 8123) |
+| `user` | No | Username (default: default) |
+| `password` | No | Password (default: empty) |
+| `database` | No | Default database (default: default) |
+
+```json
+{
+  "name": "clickhouse",
+  "connection_type": "clickhouse",
+  "host": "clickhouse.example.com",
+  "port": 8123,
+  "user": "default",
+  "password": "",
+  "database": "default"
+}
+```
 
 ### DuckDB
 

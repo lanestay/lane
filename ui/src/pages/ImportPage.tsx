@@ -64,7 +64,7 @@ export default function ImportPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const defaultSchema = connType === "postgres" ? "public" : "dbo";
+  const defaultSchema = connType === "postgres" ? "public" : connType === "clickhouse" ? "default" : "dbo";
 
   // Fetch schemas when database changes
   useEffect(() => {
@@ -80,7 +80,7 @@ export default function ImportPage() {
         const names = result.map((r) => r.schema_name);
         setSchemas(names);
         // Pre-select default schema
-        const preferred = connType === "postgres" ? "public" : "dbo";
+        const preferred = connType === "postgres" ? "public" : connType === "clickhouse" ? "default" : "dbo";
         if (names.includes(preferred)) {
           setSchema(preferred);
         } else if (names.length > 0) {
@@ -272,7 +272,7 @@ export default function ImportPage() {
                       className="shrink-0 text-xs"
                       onClick={() => {
                         setCustomSchema(false);
-                        const preferred = connType === "postgres" ? "public" : "dbo";
+                        const preferred = connType === "postgres" ? "public" : connType === "clickhouse" ? "default" : "dbo";
                         if (schemas.includes(preferred)) setSchema(preferred);
                         else if (schemas.length > 0) setSchema(schemas[0]);
                       }}
