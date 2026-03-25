@@ -13,6 +13,7 @@ mod mcp;
 mod pii;
 mod query;
 mod rest;
+mod graph;
 mod search;
 #[cfg(feature = "storage")]
 mod storage;
@@ -153,6 +154,21 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Initialize graph database
+    let graph_db_path = data_dir.join("graph.db");
+    let graph_db = match graph::GraphDb::new(
+        graph_db_path.to_str().unwrap_or("data/graph.db"),
+    ) {
+        Ok(db) => {
+            tracing::info!("Graph database initialized at {:?}", graph_db_path);
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            tracing::warn!("Failed to initialize graph database: {}", e);
+            None
+        }
+    };
+
     // Create file download cache
     let downloads: api::FileCache = Arc::new(RwLock::new(HashMap::new()));
 
@@ -254,6 +270,7 @@ async fn main() -> Result<()> {
         #[cfg(feature = "storage")]
         storage_registry,
         search_db: search_db.clone(),
+        graph_db: graph_db.clone(),
         auth_providers: auth_providers.clone(),
         oidc_configs,
         base_url,
@@ -559,6 +576,7 @@ async fn run_http_server(
                 #[cfg(feature = "storage")]
                 Some(state.storage_registry.clone()),
                 state.search_db.clone(),
+                state.graph_db.clone(),
             ));
             app = app
                 .route(
