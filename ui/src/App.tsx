@@ -14,6 +14,7 @@ import MonitorPage from "./pages/MonitorPage";
 import HealthPage from "./pages/HealthPage";
 import StoragePage from "./pages/StoragePage";
 import ObjectsPage from "./pages/ObjectsPage";
+import GraphPage from "./pages/GraphPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 
 function AppContent() {
@@ -42,6 +43,7 @@ function AppContent() {
           <Route path="/" element={<QueryPage />} />
           <Route path="/tables" element={<TablesPage />} />
           <Route path="/objects" element={<ObjectsPage />} />
+          <Route path="/graph" element={<GraphPage />} />
           <Route path="/realtime" element={<RealtimePage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/workspace" element={<WorkspacePage />} />

@@ -30,6 +30,7 @@ Lane is a self-contained database platform — query engine, REST API, MCP serve
 - [[search]] — Full-text search across schema, queries, and endpoints (FTS5)
 - [[storage]] — MinIO/S3 object storage browsing, upload, and preview
 - [[workspace]] — DuckDB workspace for import, export, and analysis
+- [[graph]] — Cross-connection relationship graph for join path discovery
 - [[realtime]] — Live query monitoring and event streaming
 
 ## Security & Access Control

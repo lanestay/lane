@@ -67,9 +67,15 @@ pub struct GraphDb {
 }
 
 impl GraphDb {
-    pub fn new(path: &str) -> Result<Self, String> {
+    pub fn new(path: &str, key: &str) -> Result<Self, String> {
         let conn =
             Connection::open(path).map_err(|e| format!("Failed to open graph DB: {}", e))?;
+
+        conn.pragma_update(None, "key", key)
+            .map_err(|e| format!("Failed to set SQLCipher key: {}", e))?;
+
+        conn.execute_batch("SELECT count(*) FROM sqlite_master;")
+            .map_err(|e| format!("SQLCipher key verification failed (wrong key?): {}", e))?;
 
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| format!("Failed to set WAL mode: {}", e))?;
@@ -646,7 +652,7 @@ mod tests {
     use super::*;
 
     fn test_db() -> GraphDb {
-        GraphDb::new(":memory:").unwrap()
+        GraphDb::new(":memory:", "test-key-12345").unwrap()
     }
 
     #[test]

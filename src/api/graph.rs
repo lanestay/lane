@@ -408,6 +408,11 @@ pub async fn seed_handler(
         connection_names.iter().map(|s| s.as_str()).collect()
     };
 
+    // Clear existing auto-seeded edges before re-seeding
+    let cleared = graph_db
+        .delete_graph_edges_by_type("join_key")
+        .unwrap_or(0);
+
     let mut total_edges = 0usize;
     let mut connections_processed = 0usize;
     let mut errors: Vec<String> = Vec::new();
@@ -465,7 +470,8 @@ pub async fn seed_handler(
 
                 for table in &tables {
                     let table_name = table
-                        .get("table_name")
+                        .get("TABLE_NAME")
+                        .or_else(|| table.get("table_name"))
                         .or_else(|| table.get("name"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
@@ -498,6 +504,7 @@ pub async fn seed_handler(
         Json(json!({
             "success": true,
             "connections_processed": connections_processed,
+            "edges_cleared": cleared,
             "edges_seeded": total_edges,
             "errors": errors,
         })),

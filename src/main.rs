@@ -158,6 +158,7 @@ async fn main() -> Result<()> {
     let graph_db_path = data_dir.join("graph.db");
     let graph_db = match graph::GraphDb::new(
         graph_db_path.to_str().unwrap_or("data/graph.db"),
+        &cipher_key,
     ) {
         Ok(db) => {
             tracing::info!("Graph database initialized at {:?}", graph_db_path);
