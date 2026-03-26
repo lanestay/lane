@@ -104,8 +104,8 @@ export default function GraphPage() {
       {/* Start Node Selector */}
       <Card>
         <CardHeader className="pb-2">
-          <h3 className="text-sm font-medium">Start Node</h3>
-          <p className="text-xs text-muted-foreground">Select a table to explore its relationships across connections.</p>
+          <h3 className="text-sm font-medium">Start Table</h3>
+          <p className="text-xs text-muted-foreground">Select a table to discover how it connects to other tables — including across different database connections.</p>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -170,13 +170,13 @@ export default function GraphPage() {
               Starting from: <span className="font-mono">{formatNode(result.start_node)}</span>
             </h3>
             <p className="text-xs text-muted-foreground">
-              {result.reachable.length} reachable table{result.reachable.length !== 1 ? "s" : ""}
+              {result.reachable.length} reachable table{result.reachable.length !== 1 ? "s" : ""} — each row shows the exact join chain needed to get there
             </p>
           </CardHeader>
           <CardContent>
             {result.reachable.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                No connected tables found. The graph may need seeding (Admin &rarr; Graph tab).
+                No connected tables found. Seed the graph from foreign keys in Admin &rarr; Graph tab, or manually add cross-connection edges.
               </p>
             ) : (
               <div className="space-y-4">

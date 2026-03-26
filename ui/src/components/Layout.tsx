@@ -60,8 +60,8 @@ const PAGE_META: Record<string, { eyebrow: string; title: string; description: s
   },
   "/graph": {
     eyebrow: "Explore",
-    title: "Graph",
-    description: "Explore table relationships and join paths across databases.",
+    title: "Join Path Explorer",
+    description: "Discover how tables connect across databases. Find join paths for queries, exports, and agent workflows.",
   },
   "/realtime": {
     eyebrow: "Operations",
@@ -179,7 +179,7 @@ export default function Layout() {
       items: [
         { to: "/tables", label: "Tables", icon: <Table2 className="size-4" /> },
         { to: "/objects", label: "Objects", icon: <Blocks className="size-4" /> },
-        { to: "/graph", label: "Graph", icon: <GitGraph className="size-4" /> },
+        { to: "/graph", label: "Join Paths", icon: <GitGraph className="size-4" /> },
       ],
     },
     {
