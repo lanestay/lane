@@ -10,7 +10,7 @@ import {
   listPiiRules, createPiiRule, updatePiiRule, deletePiiRule, testPiiRule,
   listPiiColumns, setPiiColumn, removePiiColumn, discoverPiiColumns,
   getPiiSettings, setPiiSettings,
-  listConnections, listDatabases, listTables, describeTable,
+  listConnections, listDatabases, listSchemas, listTables, describeTable,
   listStorageColumnLinks, setStorageColumnLink, removeStorageColumnLink,
   storageListConnections, storageListBuckets,
   listServiceAccounts, createServiceAccount, updateServiceAccount,
@@ -22,6 +22,7 @@ import {
   listProjectMembers, addProjectMember, setProjectMemberRole, removeProjectMember,
   listEndpoints, createEndpoint, updateEndpoint, deleteEndpoint,
   getEndpointPermissions, setEndpointPermissions,
+  listGraphEdges, createGraphEdge, deleteGraphEdge, seedGraph,
 } from "../lib/api";
 import type {
   UserInfo, TokenRecord, Permission, AuditEntry,
@@ -32,6 +33,8 @@ import type {
   ServiceAccountInfo, StoragePermission,
   Team, Project, TeamMember, ProjectMember,
   EndpointInfo,
+  GraphEdgeExpanded, SeedResult, CreateEdgeData, ConnectionInfo,
+  DatabaseInfo, TableInfo,
 } from "../lib/api";
 import { formatExpiry } from "./MyAccessPage";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -80,6 +83,7 @@ export default function AdminPage() {
           <TabsTrigger value="audit">Audit Log</TabsTrigger>
           <TabsTrigger value="endpoints">Endpoints</TabsTrigger>
           <TabsTrigger value="storage-links">Storage Links</TabsTrigger>
+          <TabsTrigger value="graph">Graph</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="connections"><ConnectionsTab onError={setError} /></TabsContent>
@@ -92,6 +96,7 @@ export default function AdminPage() {
         <TabsContent value="audit"><AuditTab onError={setError} /></TabsContent>
         <TabsContent value="endpoints"><EndpointsTab onError={setError} /></TabsContent>
         <TabsContent value="storage-links"><StorageLinksTab onError={setError} /></TabsContent>
+        <TabsContent value="graph"><GraphTab onError={setError} /></TabsContent>
         <TabsContent value="settings"><SettingsTab onError={setError} /></TabsContent>
       </Tabs>
     </div>
@@ -4035,5 +4040,369 @@ function TeamsTab({ onError }: { onError: (msg: string) => void }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ============================================================================
+// Graph Tab
+// ============================================================================
+
+function formatNode(node: { connection_name: string; database_name: string; schema_name: string; table_name: string }) {
+  const parts = [node.connection_name, node.database_name];
+  if (node.schema_name) parts.push(node.schema_name);
+  if (node.table_name) parts.push(node.table_name);
+  return parts.join(" / ");
+}
+
+function GraphTab({ onError }: { onError: (msg: string) => void }) {
+  const [edges, setEdges] = useState<GraphEdgeExpanded[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filterEdgeType, setFilterEdgeType] = useState("");
+  const [filterConnection, setFilterConnection] = useState("");
+  const [showCreateEdge, setShowCreateEdge] = useState(false);
+  const [connections, setConnections] = useState<ConnectionInfo[]>([]);
+  const [seedConnection, setSeedConnection] = useState("");
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<SeedResult | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [edgeData, connData] = await Promise.all([
+        listGraphEdges(filterEdgeType || undefined),
+        listConnections(),
+      ]);
+      setEdges(edgeData);
+      setConnections(connData);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [onError, filterEdgeType]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleSeed = async () => {
+    try {
+      setSeeding(true);
+      setSeedResult(null);
+      const result = await seedGraph(seedConnection || undefined);
+      setSeedResult(result);
+      refresh();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  const handleDeleteEdge = async (id: number) => {
+    try {
+      await deleteGraphEdge(id);
+      refresh();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const filtered = filterConnection
+    ? edges.filter(e => e.source.connection_name === filterConnection || e.target.connection_name === filterConnection)
+    : edges;
+
+  return (
+    <>
+      {/* Seed Section */}
+      <Card className="mb-4">
+        <CardContent className="pt-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <Label className="text-sm font-medium">Seed from Foreign Keys:</Label>
+            <Select value={seedConnection} onValueChange={setSeedConnection}>
+              <SelectTrigger className="w-48"><SelectValue placeholder="All connections" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All connections</SelectItem>
+                {connections.map(c => (
+                  <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" onClick={handleSeed} disabled={seeding}>
+              {seeding ? "Seeding..." : "Seed"}
+            </Button>
+            {seedResult && (
+              <span className="text-sm text-muted-foreground">
+                {seedResult.edges_seeded} edges from {seedResult.connections_processed} connection(s)
+                {seedResult.errors.length > 0 && (
+                  <span className="text-destructive ml-1">({seedResult.errors.length} errors)</span>
+                )}
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Filters + Actions */}
+      <div className="flex justify-between items-center mb-3 gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Select value={filterEdgeType} onValueChange={setFilterEdgeType}>
+            <SelectTrigger className="w-40"><SelectValue placeholder="All types" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All types</SelectItem>
+              <SelectItem value="join_key">join_key</SelectItem>
+              <SelectItem value="derives_from">derives_from</SelectItem>
+              <SelectItem value="references">references</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filterConnection} onValueChange={setFilterConnection}>
+            <SelectTrigger className="w-40"><SelectValue placeholder="All connections" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All connections</SelectItem>
+              {connections.map(c => (
+                <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="sm" onClick={refresh}>Refresh</Button>
+        </div>
+        <Button size="sm" onClick={() => setShowCreateEdge(true)}>+ Add Edge</Button>
+      </div>
+
+      {/* Edge Table */}
+      <Card>
+        {loading ? (
+          <CardContent className="py-8 text-center text-muted-foreground">Loading...</CardContent>
+        ) : filtered.length === 0 ? (
+          <CardContent className="py-8 text-center text-muted-foreground">
+            No edges found. Use "Seed" to auto-discover FK relationships or "Add Edge" to create one.
+          </CardContent>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Source</TableHead>
+                <TableHead>Target</TableHead>
+                <TableHead>Columns</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Created By</TableHead>
+                <TableHead className="w-16"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map(edge => (
+                <TableRow key={edge.id}>
+                  <TableCell className="text-xs font-mono">{formatNode(edge.source)}</TableCell>
+                  <TableCell className="text-xs font-mono">{formatNode(edge.target)}</TableCell>
+                  <TableCell className="text-xs font-mono">
+                    {edge.source_columns?.join(", ") || "—"}
+                    <span className="text-muted-foreground mx-1">&rarr;</span>
+                    {edge.target_columns?.join(", ") || "—"}
+                  </TableCell>
+                  <TableCell><Badge variant="outline">{edge.edge_type}</Badge></TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{edge.created_by || "—"}</TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleDeleteEdge(edge.id)}>
+                      Delete
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
+
+      <CreateEdgeDialog
+        open={showCreateEdge}
+        onClose={() => setShowCreateEdge(false)}
+        onCreated={refresh}
+        onError={onError}
+        connections={connections}
+      />
+    </>
+  );
+}
+
+// ============================================================================
+// Create Edge Dialog
+// ============================================================================
+
+function CascadingTableSelect({
+  label,
+  connections,
+  connection, setConnection,
+  database, setDatabase,
+  schema, setSchema,
+  table, setTable,
+}: {
+  label: string;
+  connections: ConnectionInfo[];
+  connection: string; setConnection: (v: string) => void;
+  database: string; setDatabase: (v: string) => void;
+  schema: string; setSchema: (v: string) => void;
+  table: string; setTable: (v: string) => void;
+}) {
+  const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
+  const [schemas, setSchemas] = useState<{ schema_name: string }[]>([]);
+  const [tables, setTables] = useState<TableInfo[]>([]);
+
+  useEffect(() => {
+    if (!connection) { setDatabases([]); return; }
+    listDatabases(connection).then(setDatabases).catch(() => setDatabases([]));
+  }, [connection]);
+
+  useEffect(() => {
+    if (!database || !connection) { setSchemas([]); return; }
+    listSchemas(database, connection).then(setSchemas).catch(() => setSchemas([]));
+  }, [database, connection]);
+
+  useEffect(() => {
+    if (!database || !connection || !schema) { setTables([]); return; }
+    listTables(database, connection, schema).then(setTables).catch(() => setTables([]));
+  }, [database, connection, schema]);
+
+  return (
+    <div className="space-y-2">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Select value={connection} onValueChange={(v) => { setConnection(v); setDatabase(""); setSchema(""); setTable(""); }}>
+        <SelectTrigger><SelectValue placeholder="Connection" /></SelectTrigger>
+        <SelectContent>
+          {connections.map(c => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Select value={database} onValueChange={(v) => { setDatabase(v); setSchema(""); setTable(""); }} disabled={!connection}>
+        <SelectTrigger><SelectValue placeholder="Database" /></SelectTrigger>
+        <SelectContent>
+          {databases.map(d => <SelectItem key={d.name} value={d.name}>{d.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Select value={schema} onValueChange={(v) => { setSchema(v); setTable(""); }} disabled={!database}>
+        <SelectTrigger><SelectValue placeholder="Schema" /></SelectTrigger>
+        <SelectContent>
+          {schemas.map(s => <SelectItem key={s.schema_name} value={s.schema_name}>{s.schema_name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Select value={table} onValueChange={setTable} disabled={!schema}>
+        <SelectTrigger><SelectValue placeholder="Table" /></SelectTrigger>
+        <SelectContent>
+          {tables.map(t => <SelectItem key={t.TABLE_NAME} value={t.TABLE_NAME}>{t.TABLE_NAME}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function CreateEdgeDialog({
+  open, onClose, onCreated, onError, connections,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: () => void;
+  onError: (msg: string) => void;
+  connections: ConnectionInfo[];
+}) {
+  const [srcConn, setSrcConn] = useState("");
+  const [srcDb, setSrcDb] = useState("");
+  const [srcSchema, setSrcSchema] = useState("");
+  const [srcTable, setSrcTable] = useState("");
+  const [tgtConn, setTgtConn] = useState("");
+  const [tgtDb, setTgtDb] = useState("");
+  const [tgtSchema, setTgtSchema] = useState("");
+  const [tgtTable, setTgtTable] = useState("");
+  const [srcCols, setSrcCols] = useState("");
+  const [tgtCols, setTgtCols] = useState("");
+  const [edgeType, setEdgeType] = useState("join_key");
+  const [submitting, setSubmitting] = useState(false);
+
+  const reset = () => {
+    setSrcConn(""); setSrcDb(""); setSrcSchema(""); setSrcTable("");
+    setTgtConn(""); setTgtDb(""); setTgtSchema(""); setTgtTable("");
+    setSrcCols(""); setTgtCols(""); setEdgeType("join_key");
+  };
+
+  const handleSubmit = async () => {
+    if (!srcConn || !srcDb || !tgtConn || !tgtDb) {
+      onError("Source and target connection + database are required");
+      return;
+    }
+    try {
+      setSubmitting(true);
+      const data: CreateEdgeData = {
+        source_connection: srcConn,
+        source_database: srcDb,
+        source_schema: srcSchema || undefined,
+        source_table: srcTable || undefined,
+        target_connection: tgtConn,
+        target_database: tgtDb,
+        target_schema: tgtSchema || undefined,
+        target_table: tgtTable || undefined,
+        edge_type: edgeType,
+        source_columns: srcCols || undefined,
+        target_columns: tgtCols || undefined,
+      };
+      await createGraphEdge(data);
+      reset();
+      onClose();
+      onCreated();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) { reset(); onClose(); } }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Create Graph Edge</DialogTitle>
+          <DialogDescription>Define a relationship between two tables, optionally across different connections.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-4 py-2">
+          <CascadingTableSelect
+            label="Source"
+            connections={connections}
+            connection={srcConn} setConnection={setSrcConn}
+            database={srcDb} setDatabase={setSrcDb}
+            schema={srcSchema} setSchema={setSrcSchema}
+            table={srcTable} setTable={setSrcTable}
+          />
+          <CascadingTableSelect
+            label="Target"
+            connections={connections}
+            connection={tgtConn} setConnection={setTgtConn}
+            database={tgtDb} setDatabase={setTgtDb}
+            schema={tgtSchema} setSchema={setTgtSchema}
+            table={tgtTable} setTable={setTgtTable}
+          />
+        </div>
+        <div className="grid grid-cols-3 gap-3 py-2">
+          <div>
+            <Label className="text-xs">Source Columns</Label>
+            <Input placeholder="e.g. user_id" value={srcCols} onChange={e => setSrcCols(e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">Target Columns</Label>
+            <Input placeholder="e.g. customer_id" value={tgtCols} onChange={e => setTgtCols(e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">Edge Type</Label>
+            <Select value={edgeType} onValueChange={setEdgeType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="join_key">join_key</SelectItem>
+                <SelectItem value="derives_from">derives_from</SelectItem>
+                <SelectItem value="references">references</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { reset(); onClose(); }}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={submitting || !srcConn || !srcDb || !tgtConn || !tgtDb}>
+            {submitting ? "Creating..." : "Create Edge"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

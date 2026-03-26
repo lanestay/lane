@@ -2175,3 +2175,127 @@ export async function adminSearchStats(): Promise<SearchStats> {
   const res = await adminFetch("search/stats");
   return res.json();
 }
+
+// ============================================================================
+// Graph API
+// ============================================================================
+
+export interface GraphNode {
+  id: number;
+  connection_name: string;
+  database_name: string;
+  schema_name: string;
+  table_name: string;
+  node_type: string;
+  label: string | null;
+  created_at: string;
+}
+
+export interface GraphEdgeExpanded {
+  id: number;
+  edge_type: string;
+  source: GraphNode;
+  target: GraphNode;
+  source_columns: string[] | null;
+  target_columns: string[] | null;
+  metadata: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface TraversalPath {
+  node: GraphNode;
+  depth: number;
+  edges: GraphEdgeExpanded[];
+}
+
+export interface TraversalResult {
+  start_node: GraphNode;
+  reachable: TraversalPath[];
+}
+
+export interface SeedResult {
+  success: boolean;
+  connections_processed: number;
+  edges_seeded: number;
+  errors: string[];
+}
+
+export interface CreateEdgeData {
+  source_connection?: string;
+  source_database?: string;
+  source_schema?: string;
+  source_table?: string;
+  target_connection?: string;
+  target_database?: string;
+  target_schema?: string;
+  target_table?: string;
+  edge_type: string;
+  source_columns?: string;
+  target_columns?: string;
+  metadata?: string;
+}
+
+export interface TraverseRequest {
+  connection_name?: string;
+  database_name?: string;
+  schema_name?: string;
+  table_name?: string;
+  node_id?: number;
+  max_depth?: number;
+  edge_types?: string;
+}
+
+export async function listGraphNodes(connection?: string): Promise<GraphNode[]> {
+  const params = connection ? `?connection=${encodeURIComponent(connection)}` : "";
+  const res = await adminFetch(`graph/nodes${params}`);
+  return res.json();
+}
+
+export async function deleteGraphNode(id: number): Promise<void> {
+  await adminFetch(`graph/nodes/${id}`, { method: "DELETE" });
+}
+
+export async function listGraphEdges(edgeType?: string): Promise<GraphEdgeExpanded[]> {
+  const params = edgeType ? `?edge_type=${encodeURIComponent(edgeType)}` : "";
+  const res = await adminFetch(`graph/edges${params}`);
+  return res.json();
+}
+
+export async function createGraphEdge(data: CreateEdgeData): Promise<{ id: number }> {
+  const res = await adminFetch("graph/edges", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function deleteGraphEdge(id: number): Promise<void> {
+  await adminFetch(`graph/edges/${id}`, { method: "DELETE" });
+}
+
+export async function seedGraph(connectionName?: string): Promise<SeedResult> {
+  const res = await adminFetch("graph/seed", {
+    method: "POST",
+    body: JSON.stringify({ connection_name: connectionName || undefined }),
+  });
+  return res.json();
+}
+
+export async function traverseGraph(req: TraverseRequest): Promise<TraversalResult> {
+  const res = await fetch(`${base}/api/lane/graph/traverse`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    try {
+      const err = JSON.parse(body);
+      throw new Error(err.message || `HTTP ${res.status}`);
+    } catch {
+      throw new Error(`HTTP ${res.status}: ${body}`);
+    }
+  }
+  return res.json();
+}

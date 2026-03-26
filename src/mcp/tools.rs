@@ -249,6 +249,40 @@ pub struct NavigateTablesParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphTraverseParams {
+    #[schemars(description = "Table name to start traversal from")]
+    pub table: String,
+
+    #[schemars(description = "Database name for the starting table")]
+    pub database: String,
+
+    #[schemars(description = "Schema name (defaults to empty)")]
+    pub schema: Option<String>,
+
+    #[schemars(description = "Connection name for the starting table. Uses default connection if omitted.")]
+    pub connection: Option<String>,
+
+    #[schemars(description = "Maximum traversal depth (default: 3, max: 10)")]
+    pub max_depth: Option<usize>,
+
+    #[schemars(
+        description = "Comma-separated edge types to follow (default: all). E.g. 'join_key' or 'join_key,derives_from'"
+    )]
+    pub edge_types: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphListEdgesParams {
+    #[schemars(
+        description = "Filter by edge type (e.g. 'join_key', 'derives_from'). Omit to list all."
+    )]
+    pub edge_type: Option<String>,
+
+    #[schemars(description = "Filter to edges involving this connection name")]
+    pub connection: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListDatabasesParams {
     #[schemars(description = "Named connection to use. Uses default connection if omitted.")]
     pub connection: Option<String>,
@@ -495,6 +529,7 @@ pub struct BatchQueryMcp {
     #[cfg(feature = "storage")]
     pub storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
     pub search_db: Option<Arc<crate::search::db::SearchDb>>,
+    pub graph_db: Option<Arc<crate::graph::GraphDb>>,
 }
 
 impl BatchQueryMcp {
@@ -508,6 +543,7 @@ impl BatchQueryMcp {
         #[cfg(feature = "duckdb_backend")] workspace_dir: Option<std::path::PathBuf>,
         #[cfg(feature = "storage")] storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
         search_db: Option<Arc<crate::search::db::SearchDb>>,
+        graph_db: Option<Arc<crate::graph::GraphDb>>,
     ) -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -523,6 +559,7 @@ impl BatchQueryMcp {
             #[cfg(feature = "storage")]
             storage_registry,
             search_db,
+            graph_db,
         }
     }
 
@@ -1895,6 +1932,99 @@ impl BatchQueryMcp {
             "source_row_count": source_result.data.len(),
             "relationships": relationships,
         }).to_string()
+    }
+
+    #[tool(
+        description = "Traverse the cross-connection relationship graph to discover joinable paths between tables across different database connections. Given a starting table, finds all reachable tables via join_key and other relationship edges, returning the path and join conditions. Use this to plan multi-source workspace queries."
+    )]
+    async fn graph_traverse(
+        &self,
+        Parameters(params): Parameters<GraphTraverseParams>,
+    ) -> String {
+        tracing::info!(tool = "graph_traverse", table = %params.table, database = %params.database, "Tool called");
+
+        let graph_db = match &self.graph_db {
+            Some(db) => db,
+            None => {
+                return json!({"error": true, "message": "Graph database is not available"})
+                    .to_string()
+            }
+        };
+
+        let default_name = self.registry.default_name();
+        let connection = params.connection.as_deref().unwrap_or(&default_name);
+        let schema = params.schema.as_deref().unwrap_or("");
+
+        let start_node =
+            match graph_db.find_graph_node(connection, &params.database, schema, &params.table) {
+                Ok(Some(node)) => node,
+                Ok(None) => {
+                    return json!({
+                        "error": true,
+                        "message": format!("No graph node found for {}.{}.{}.{}", connection, params.database, schema, params.table),
+                        "hint": "Use graph_list_edges to see available nodes, or seed the graph via the API"
+                    })
+                    .to_string()
+                }
+                Err(e) => return json!({"error": true, "message": e}).to_string(),
+            };
+
+        let edge_type_strings: Vec<String> = params
+            .edge_types
+            .as_deref()
+            .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+            .unwrap_or_default();
+        let edge_types: Option<Vec<&str>> = if edge_type_strings.is_empty() {
+            None
+        } else {
+            Some(edge_type_strings.iter().map(|s| s.as_str()).collect())
+        };
+
+        match graph_db.graph_traverse(start_node.id, params.max_depth.or(Some(3)), edge_types.as_deref()) {
+            Ok(result) => json!(result).to_string(),
+            Err(e) => json!({"error": true, "message": e}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "List edges in the cross-connection relationship graph. Shows how tables relate across database connections via join keys, derivation links, and other relationship types."
+    )]
+    async fn graph_list_edges(
+        &self,
+        Parameters(params): Parameters<GraphListEdgesParams>,
+    ) -> String {
+        tracing::info!(tool = "graph_list_edges", ?params.edge_type, "Tool called");
+
+        let graph_db = match &self.graph_db {
+            Some(db) => db,
+            None => {
+                return json!({"error": true, "message": "Graph database is not available"})
+                    .to_string()
+            }
+        };
+
+        let edges = match graph_db.list_graph_edges(params.edge_type.as_deref()) {
+            Ok(edges) => edges,
+            Err(e) => return json!({"error": true, "message": e}).to_string(),
+        };
+
+        // Filter by connection if specified
+        let filtered: Vec<_> = if let Some(ref conn) = params.connection {
+            edges
+                .into_iter()
+                .filter(|e| {
+                    e.source.connection_name == *conn || e.target.connection_name == *conn
+                })
+                .collect()
+        } else {
+            edges
+        };
+
+        json!({
+            "edges": filtered,
+            "count": filtered.len(),
+        })
+        .to_string()
     }
 
     #[tool(description = "List all accessible databases on the server.")]

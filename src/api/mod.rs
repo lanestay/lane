@@ -2,6 +2,7 @@ pub mod approvals;
 pub mod connections;
 pub mod endpoints;
 pub mod errors;
+pub mod graph;
 pub mod handlers;
 pub mod history;
 pub mod import;
@@ -59,6 +60,7 @@ pub struct AppState {
     #[cfg(feature = "storage")]
     pub storage_registry: Arc<crate::storage::StorageRegistry>,
     pub search_db: Option<Arc<SearchDb>>,
+    pub graph_db: Option<Arc<crate::graph::GraphDb>>,
     pub auth_providers: HashSet<crate::auth::AuthProvider>,
     pub oidc_configs: HashMap<crate::auth::AuthProvider, crate::auth::OidcProviderConfig>,
     pub base_url: Option<String>,
@@ -494,6 +496,33 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route(
             "/api/lane/admin/search/stats",
             get(search::admin_stats),
+        );
+
+    // Graph metadata endpoints
+    app = app
+        .route(
+            "/api/lane/admin/graph/nodes",
+            get(graph::list_nodes_handler).post(graph::create_node_handler),
+        )
+        .route(
+            "/api/lane/admin/graph/nodes/{id}",
+            delete(graph::delete_node_handler),
+        )
+        .route(
+            "/api/lane/admin/graph/edges",
+            get(graph::list_edges_handler).post(graph::create_edge_handler),
+        )
+        .route(
+            "/api/lane/admin/graph/edges/{id}",
+            delete(graph::delete_edge_handler),
+        )
+        .route(
+            "/api/lane/admin/graph/seed",
+            post(graph::seed_handler),
+        )
+        .route(
+            "/api/lane/graph/traverse",
+            post(graph::traverse_handler),
         );
 
     // Named data endpoints (before REST data API nest to take priority)

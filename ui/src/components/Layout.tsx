@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Activity,
   Blocks,
+  GitGraph,
   FolderKanban,
   HardDrive,
   HeartPulse,
@@ -56,6 +57,11 @@ const PAGE_META: Record<string, { eyebrow: string; title: string; description: s
     eyebrow: "Explore",
     title: "Objects",
     description: "Views, stored procedures, and other database objects.",
+  },
+  "/graph": {
+    eyebrow: "Explore",
+    title: "Join Path Explorer",
+    description: "Discover how tables connect across databases. Find join paths for queries, exports, and agent workflows.",
   },
   "/realtime": {
     eyebrow: "Operations",
@@ -173,6 +179,7 @@ export default function Layout() {
       items: [
         { to: "/tables", label: "Tables", icon: <Table2 className="size-4" /> },
         { to: "/objects", label: "Objects", icon: <Blocks className="size-4" /> },
+        { to: "/graph", label: "Join Paths", icon: <GitGraph className="size-4" /> },
       ],
     },
     {

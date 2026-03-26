@@ -70,6 +70,7 @@ mod inner {
         #[cfg(feature = "storage")]
         storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
         search_db: Option<Arc<crate::search::db::SearchDb>>,
+        graph_db: Option<Arc<crate::graph::GraphDb>>,
         services: RwLock<HashMap<String, StreamableHttpService<BatchQueryMcp>>>,
     }
 
@@ -85,6 +86,7 @@ mod inner {
             #[cfg(feature = "duckdb_backend")] workspace_dir: Option<std::path::PathBuf>,
             #[cfg(feature = "storage")] storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
             search_db: Option<Arc<crate::search::db::SearchDb>>,
+            graph_db: Option<Arc<crate::graph::GraphDb>>,
         ) -> Self {
             Self {
                 registry,
@@ -100,6 +102,7 @@ mod inner {
                 #[cfg(feature = "storage")]
                 storage_registry,
                 search_db,
+                graph_db,
                 services: RwLock::new(HashMap::new()),
             }
         }
@@ -126,6 +129,7 @@ mod inner {
             #[cfg(feature = "storage")]
             let storage_registry = self.storage_registry.clone();
             let search_db = self.search_db.clone();
+            let graph_db = self.graph_db.clone();
 
             StreamableHttpService::new(
                 move || {
@@ -148,6 +152,7 @@ mod inner {
                         #[cfg(feature = "storage")]
                         storage_registry.clone(),
                         search_db.clone(),
+                        graph_db.clone(),
                     ))
                 },
                 LocalSessionManager::default().into(),
