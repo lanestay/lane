@@ -91,6 +91,7 @@ Returns all reachable tables grouped by depth, with the full join path (columns 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/lane/graph/traverse` | POST | BFS traversal from a starting node |
+| `/api/lane/graph/plan` | POST | Generate a complete execution plan for combining multiple tables |
 
 ## MCP Tools
 
@@ -98,15 +99,29 @@ Returns all reachable tables grouped by depth, with the full join path (columns 
 |------|-------------|
 | `graph_traverse` | Traverse the graph from a starting table. Returns reachable nodes with join paths. |
 | `graph_list_edges` | List graph edges with optional edge_type and connection filters. |
+| `graph_create_edge` | Create an edge between two tables. Nodes are auto-created. Enables agent-driven schema inference. |
+| `graph_plan` | Generate an execution plan for combining multiple tables. Returns import queries + JOIN SQL. |
 
-### Example: MCP Agent Workflow
+### graph_plan
 
-An MCP agent can use the graph to plan a cross-source workspace query:
+Given a set of tables (across any connections), `graph_plan` finds the shortest join path through the graph — including intermediate tables — describes each table's columns, and returns:
 
-1. Call `graph_traverse` from the table of interest
-2. Identify which related tables contain the needed data
-3. Use `workspace_import_query` to pull each table into the workspace
-4. Join the imported tables in a workspace query
+- **`imports[]`** — one per table, with connection, dialect-correct SELECT query, and workspace table name
+- **`join_query`** — ready-to-run DuckDB JOIN using the workspace table names
+- **`path_description`** — human-readable join chain
+
+```
+POST /api/lane/graph/plan
+{
+  "tables": [
+    {"connection": "postgres", "database": "postgres", "schema": "public", "table": "support_tickets"},
+    {"connection": "mssql", "database": "testdb", "schema": "dbo", "table": "products"}
+  ],
+  "row_limit": 1000
+}
+```
+
+The plan does not execute anything. The agent (or user) runs each import step with `workspace_import_query`, then runs the `join_query` with `workspace_query`.
 
 ## Edge Types
 
