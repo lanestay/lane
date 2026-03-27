@@ -4,8 +4,9 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::auth::{self, AuthResult};
@@ -99,6 +100,39 @@ pub struct ListNodesQuery {
 pub struct ListEdgesQuery {
     #[serde(default)]
     pub edge_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GraphPlanRequest {
+    pub tables: Vec<GraphPlanTable>,
+    #[serde(default)]
+    pub row_limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GraphPlanTable {
+    #[serde(default)]
+    pub connection: Option<String>,
+    pub database: String,
+    #[serde(default)]
+    pub schema: Option<String>,
+    pub table: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphPlan {
+    pub imports: Vec<PlanImportStep>,
+    pub join_query: String,
+    pub path_description: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PlanImportStep {
+    pub connection: String,
+    pub database: String,
+    pub query: String,
+    pub workspace_table: String,
+    pub columns: Vec<String>,
 }
 
 // ============================================================================
@@ -578,6 +612,245 @@ pub async fn traverse_handler(
     match graph_db.graph_traverse(start_id, body.max_depth, edge_types.as_deref()) {
         Ok(result) => (StatusCode::OK, Json(json!(result))).into_response(),
         Err(e) => request_error("TRAVERSAL_FAILED", &e, None)
+            .to_response(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+// ============================================================================
+// Plan handler
+// ============================================================================
+
+fn sanitize_ws_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c.to_ascii_lowercase() } else { '_' })
+        .collect()
+}
+
+fn build_select_query(
+    dialect: crate::db::Dialect,
+    schema: &str,
+    table: &str,
+    row_limit: Option<i64>,
+) -> String {
+    match dialect {
+        crate::db::Dialect::Mssql => {
+            let schema_esc = schema.replace(']', "]]");
+            let table_esc = table.replace(']', "]]");
+            if let Some(limit) = row_limit {
+                format!("SELECT TOP {} * FROM [{}].[{}]", limit, schema_esc, table_esc)
+            } else {
+                format!("SELECT * FROM [{}].[{}]", schema_esc, table_esc)
+            }
+        }
+        _ => {
+            let schema_esc = schema.replace('"', "\"\"");
+            let table_esc = table.replace('"', "\"\"");
+            if let Some(limit) = row_limit {
+                format!("SELECT * FROM \"{}\".\"{}\" LIMIT {}", schema_esc, table_esc, limit)
+            } else {
+                format!("SELECT * FROM \"{}\".\"{}\"\n", schema_esc, table_esc)
+            }
+        }
+    }
+}
+
+/// Build a complete execution plan for combining multiple tables.
+pub async fn build_graph_plan(
+    registry: &crate::db::ConnectionRegistry,
+    join_path: crate::graph::JoinPath,
+    row_limit: Option<i64>,
+) -> Result<GraphPlan, String> {
+    // Build workspace table names and detect collisions
+    let mut ws_names: HashMap<i64, String> = HashMap::new();
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+
+    // First pass: generate base names
+    for node in &join_path.nodes {
+        let base = format!("{}_{}", sanitize_ws_name(&node.connection_name), sanitize_ws_name(&node.table_name));
+        *name_counts.entry(base.clone()).or_insert(0) += 1;
+    }
+
+    // Second pass: add database prefix on collision
+    for node in &join_path.nodes {
+        let base = format!("{}_{}", sanitize_ws_name(&node.connection_name), sanitize_ws_name(&node.table_name));
+        let name = if name_counts.get(&base).copied().unwrap_or(0) > 1 {
+            format!("{}_{}_{}", sanitize_ws_name(&node.connection_name), sanitize_ws_name(&node.database_name), sanitize_ws_name(&node.table_name))
+        } else {
+            base
+        };
+        ws_names.insert(node.id, name);
+    }
+
+    // Describe tables and build import steps
+    let mut imports: Vec<PlanImportStep> = Vec::new();
+    for node in &join_path.nodes {
+        let db = registry.get(&node.connection_name).ok_or_else(|| {
+            format!("Connection '{}' not found", node.connection_name)
+        })?;
+
+        let columns = match db.describe_table(&node.database_name, &node.table_name, &node.schema_name).await {
+            Ok(cols) => cols
+                .iter()
+                .filter_map(|c| c.get("COLUMN_NAME").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .collect::<Vec<_>>(),
+            Err(_) => vec![], // table might not be accessible, still include in plan
+        };
+
+        let query = build_select_query(db.dialect(), &node.schema_name, &node.table_name, row_limit);
+        let ws_table = ws_names.get(&node.id).cloned().unwrap_or_default();
+
+        imports.push(PlanImportStep {
+            connection: node.connection_name.clone(),
+            database: node.database_name.clone(),
+            query: query.trim().to_string(),
+            workspace_table: ws_table,
+            columns,
+        });
+    }
+
+    // Build join SQL (DuckDB dialect — workspace is always DuckDB)
+    let mut join_sql = String::new();
+    if imports.is_empty() {
+        return Ok(GraphPlan {
+            imports,
+            join_query: String::new(),
+            path_description: String::new(),
+        });
+    }
+
+    // Node ID -> workspace table name + alias
+    let mut node_alias: HashMap<i64, (String, String)> = HashMap::new();
+    for (i, node) in join_path.nodes.iter().enumerate() {
+        let ws_name = ws_names.get(&node.id).cloned().unwrap_or_default();
+        let alias = format!("t{}", i);
+        node_alias.insert(node.id, (ws_name, alias));
+    }
+
+    // SELECT * FROM first table
+    let (first_ws, first_alias) = node_alias.get(&join_path.nodes[0].id).unwrap();
+    join_sql.push_str(&format!("SELECT *\nFROM \"{}\" AS {}", first_ws, first_alias));
+
+    // Track which nodes have been joined
+    let mut joined: HashSet<i64> = HashSet::new();
+    joined.insert(join_path.nodes[0].id);
+
+    // For each edge, add a LEFT JOIN
+    for edge in &join_path.edges {
+        let src_id = edge.source.id;
+        let tgt_id = edge.target.id;
+
+        // Figure out which side is already joined and which is new
+        let (existing_id, new_id, left_cols, right_cols) = if joined.contains(&src_id) && !joined.contains(&tgt_id) {
+            (src_id, tgt_id, &edge.source_columns, &edge.target_columns)
+        } else if joined.contains(&tgt_id) && !joined.contains(&src_id) {
+            (tgt_id, src_id, &edge.target_columns, &edge.source_columns)
+        } else if joined.contains(&src_id) && joined.contains(&tgt_id) {
+            continue; // both already joined, skip duplicate edge
+        } else {
+            continue; // neither joined yet — shouldn't happen with ordered edges
+        };
+
+        let (_, existing_alias) = node_alias.get(&existing_id).unwrap();
+        let (new_ws, new_alias) = node_alias.get(&new_id).unwrap();
+
+        join_sql.push_str(&format!("\nLEFT JOIN \"{}\" AS {}", new_ws, new_alias));
+
+        // Build ON clause from column mappings
+        if let (Some(l_cols), Some(r_cols)) = (left_cols, right_cols) {
+            let conditions: Vec<String> = l_cols
+                .iter()
+                .zip(r_cols.iter())
+                .map(|(l, r)| format!("{}.\"{}\" = {}.\"{}\"", existing_alias, l, new_alias, r))
+                .collect();
+            if !conditions.is_empty() {
+                join_sql.push_str(&format!("\n  ON {}", conditions.join(" AND ")));
+            }
+        }
+
+        joined.insert(new_id);
+    }
+
+    // Build path description
+    let mut path_parts: Vec<String> = Vec::new();
+    for (i, node) in join_path.nodes.iter().enumerate() {
+        let mut part = node.table_name.clone();
+        if i > 0 {
+            // Find the edge that connects this node
+            if let Some(edge) = join_path.edges.iter().find(|e| e.source.id == node.id || e.target.id == node.id) {
+                let src_cols = edge.source_columns.as_ref().map(|c| c.join(",")).unwrap_or_default();
+                let tgt_cols = edge.target_columns.as_ref().map(|c| c.join(",")).unwrap_or_default();
+                part = format!("{} ({}→{})", node.table_name, src_cols, tgt_cols);
+            }
+        }
+        path_parts.push(part);
+    }
+    let path_description = path_parts.join(" → ");
+
+    Ok(GraphPlan {
+        imports,
+        join_query: join_sql,
+        path_description,
+    })
+}
+
+/// POST /api/lane/graph/plan
+pub async fn plan_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<GraphPlanRequest>,
+) -> Response {
+    let auth = auth::authenticate(&headers, &state).await;
+    if let AuthResult::Denied(reason) = &auth {
+        return request_error("UNAUTHORIZED", reason, None).to_response(StatusCode::UNAUTHORIZED);
+    }
+
+    let graph_db = match require_graph_db(&state) {
+        Ok(db) => db,
+        Err(resp) => return resp,
+    };
+
+    if body.tables.is_empty() {
+        return request_error("INVALID_REQUEST", "At least one table is required", None)
+            .to_response(StatusCode::BAD_REQUEST);
+    }
+
+    // Resolve each table to a node ID
+    let default_conn = state.registry.default_name();
+    let mut node_ids: Vec<i64> = Vec::new();
+
+    for t in &body.tables {
+        let conn = t.connection.as_deref().unwrap_or(&default_conn);
+        let schema = t.schema.as_deref().unwrap_or("");
+        match graph_db.find_graph_node(conn, &t.database, schema, &t.table) {
+            Ok(Some(node)) => node_ids.push(node.id),
+            Ok(None) => {
+                return request_error(
+                    "NOT_FOUND",
+                    &format!("No graph node for {}/{}/{}.{}", conn, t.database, schema, t.table),
+                    Some("Seed the graph or create the node first"),
+                )
+                .to_response(StatusCode::NOT_FOUND);
+            }
+            Err(e) => {
+                return request_error("QUERY_FAILED", &e, None)
+                    .to_response(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    // Find join paths
+    let join_path = match graph_db.find_join_paths(&node_ids) {
+        Ok(p) => p,
+        Err(e) => {
+            return request_error("PLAN_FAILED", &e, Some("Ensure edges exist between the requested tables"))
+                .to_response(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    // Build the plan
+    match build_graph_plan(&state.registry, join_path, body.row_limit).await {
+        Ok(plan) => (StatusCode::OK, Json(json!(plan))).into_response(),
+        Err(e) => request_error("PLAN_FAILED", &e, None)
             .to_response(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }

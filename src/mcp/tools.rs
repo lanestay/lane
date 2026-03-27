@@ -283,6 +283,68 @@ pub struct GraphListEdgesParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphCreateEdgeParams {
+    #[schemars(description = "Source connection name")]
+    pub source_connection: String,
+
+    #[schemars(description = "Source database name")]
+    pub source_database: String,
+
+    #[schemars(description = "Source schema name (defaults to empty)")]
+    pub source_schema: Option<String>,
+
+    #[schemars(description = "Source table name")]
+    pub source_table: String,
+
+    #[schemars(description = "Target connection name")]
+    pub target_connection: String,
+
+    #[schemars(description = "Target database name")]
+    pub target_database: String,
+
+    #[schemars(description = "Target schema name (defaults to empty)")]
+    pub target_schema: Option<String>,
+
+    #[schemars(description = "Target table name")]
+    pub target_table: String,
+
+    #[schemars(description = "Edge type: 'join_key', 'derives_from', 'references', or custom")]
+    pub edge_type: String,
+
+    #[schemars(description = "Comma-separated source column names for the join (e.g. 'email' or 'user_id')")]
+    pub source_columns: Option<String>,
+
+    #[schemars(description = "Comma-separated target column names for the join (e.g. 'email' or 'id')")]
+    pub target_columns: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphPlanTableParam {
+    #[schemars(description = "Connection name. Uses default if omitted.")]
+    pub connection: Option<String>,
+
+    #[schemars(description = "Database name")]
+    pub database: String,
+
+    #[schemars(description = "Schema name (defaults to empty)")]
+    pub schema: Option<String>,
+
+    #[schemars(description = "Table name")]
+    pub table: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphPlanParams {
+    #[schemars(
+        description = "Tables to include in the plan. Each entry needs at minimum: database and table. Connection defaults to the default connection if omitted."
+    )]
+    pub tables: Vec<GraphPlanTableParam>,
+
+    #[schemars(description = "Maximum rows to import per table. Omit for no limit.")]
+    pub row_limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListDatabasesParams {
     #[schemars(description = "Named connection to use. Uses default connection if omitted.")]
     pub connection: Option<String>,
@@ -2025,6 +2087,147 @@ impl BatchQueryMcp {
             "count": filtered.len(),
         })
         .to_string()
+    }
+
+    #[tool(
+        description = "Create an edge in the cross-connection relationship graph. Use this to define join relationships between tables — especially across different database connections. Nodes are auto-created if they don't exist. Requires admin or MCP-enabled user."
+    )]
+    async fn graph_create_edge(
+        &self,
+        Parameters(params): Parameters<GraphCreateEdgeParams>,
+    ) -> String {
+        tracing::info!(
+            tool = "graph_create_edge",
+            source = %format!("{}.{}.{}", params.source_connection, params.source_database, params.source_table),
+            target = %format!("{}.{}.{}", params.target_connection, params.target_database, params.target_table),
+            edge_type = %params.edge_type,
+            "Tool called"
+        );
+
+        let graph_db = match &self.graph_db {
+            Some(db) => db,
+            None => {
+                return json!({"error": true, "message": "Graph database is not available"})
+                    .to_string()
+            }
+        };
+
+        let source_schema = params.source_schema.as_deref().unwrap_or("");
+        let target_schema = params.target_schema.as_deref().unwrap_or("");
+
+        let source_id = match graph_db.upsert_graph_node(
+            &params.source_connection,
+            &params.source_database,
+            source_schema,
+            &params.source_table,
+            "table",
+            None,
+        ) {
+            Ok(id) => id,
+            Err(e) => return json!({"error": true, "message": format!("Source node: {}", e)}).to_string(),
+        };
+
+        let target_id = match graph_db.upsert_graph_node(
+            &params.target_connection,
+            &params.target_database,
+            target_schema,
+            &params.target_table,
+            "table",
+            None,
+        ) {
+            Ok(id) => id,
+            Err(e) => return json!({"error": true, "message": format!("Target node: {}", e)}).to_string(),
+        };
+
+        let created_by = self
+            .user_context
+            .as_ref()
+            .map(|ctx| ctx.email.as_str())
+            .unwrap_or("mcp");
+
+        match graph_db.create_graph_edge(
+            source_id,
+            target_id,
+            &params.edge_type,
+            params.source_columns.as_deref(),
+            params.target_columns.as_deref(),
+            None,
+            Some(created_by),
+        ) {
+            Ok(edge_id) => json!({
+                "success": true,
+                "edge_id": edge_id,
+                "source": format!("{}.{}.{}.{}", params.source_connection, params.source_database, source_schema, params.source_table),
+                "target": format!("{}.{}.{}.{}", params.target_connection, params.target_database, target_schema, params.target_table),
+                "edge_type": params.edge_type,
+                "source_columns": params.source_columns,
+                "target_columns": params.target_columns,
+            })
+            .to_string(),
+            Err(e) => json!({"error": true, "message": e}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Generate an execution plan for combining data from multiple tables across database connections. Uses the graph to find join paths between tables, describes columns, and produces workspace import queries plus a final JOIN query. Returns the plan as JSON — does not execute it. The agent should then execute each import step and the join query."
+    )]
+    async fn graph_plan(
+        &self,
+        Parameters(params): Parameters<GraphPlanParams>,
+    ) -> String {
+        tracing::info!(tool = "graph_plan", table_count = params.tables.len(), "Tool called");
+
+        let graph_db = match &self.graph_db {
+            Some(db) => db,
+            None => {
+                return json!({"error": true, "message": "Graph database is not available"})
+                    .to_string()
+            }
+        };
+
+        if params.tables.is_empty() {
+            return json!({"error": true, "message": "At least one table is required"}).to_string();
+        }
+
+        let default_conn = self.registry.default_name();
+
+        // Resolve each table to a node ID
+        let mut node_ids: Vec<i64> = Vec::new();
+        for t in &params.tables {
+            let conn = t.connection.as_deref().unwrap_or(&default_conn);
+            let schema = t.schema.as_deref().unwrap_or("");
+            match graph_db.find_graph_node(conn, &t.database, schema, &t.table) {
+                Ok(Some(node)) => node_ids.push(node.id),
+                Ok(None) => {
+                    return json!({
+                        "error": true,
+                        "message": format!("No graph node for {}/{}/{}.{}", conn, t.database, schema, t.table),
+                        "hint": "Seed the graph or create the node first"
+                    })
+                    .to_string()
+                }
+                Err(e) => return json!({"error": true, "message": e}).to_string(),
+            }
+        }
+
+        // Find join paths
+        let join_path = match graph_db.find_join_paths(&node_ids) {
+            Ok(p) => p,
+            Err(e) => {
+                return json!({
+                    "error": true,
+                    "message": e,
+                    "hint": "Ensure edges exist between the requested tables"
+                })
+                .to_string()
+            }
+        };
+
+        // Build the plan
+        match crate::api::graph::build_graph_plan(&self.registry, join_path, params.row_limit).await {
+            Ok(plan) => json!(plan).to_string(),
+            Err(e) => json!({"error": true, "message": e}).to_string(),
+        }
     }
 
     #[tool(description = "List all accessible databases on the server.")]

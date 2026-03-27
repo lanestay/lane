@@ -523,6 +523,10 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route(
             "/api/lane/graph/traverse",
             post(graph::traverse_handler),
+        )
+        .route(
+            "/api/lane/graph/plan",
+            post(graph::plan_handler),
         );
 
     // Named data endpoints (before REST data API nest to take priority)
