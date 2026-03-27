@@ -58,6 +58,16 @@ pub struct TraversalPath {
     pub edges: Vec<GraphEdgeExpanded>,
 }
 
+/// A path connecting multiple requested tables through the graph.
+#[derive(Debug, Clone, Serialize)]
+pub struct JoinPath {
+    /// All nodes in the join chain, ordered for import (hub first, then by BFS depth).
+    /// Includes both requested tables and any intermediate tables needed.
+    pub nodes: Vec<GraphNode>,
+    /// Unique edges connecting the nodes, in traversal order.
+    pub edges: Vec<GraphEdgeExpanded>,
+}
+
 // ============================================================================
 // GraphDb
 // ============================================================================
@@ -547,6 +557,95 @@ impl GraphDb {
     }
 
     // ========================================================================
+    // Join Path Finding
+    // ========================================================================
+
+    /// Find the shortest paths connecting multiple tables through the graph.
+    /// Uses the first table as a hub and BFS to find paths to all others.
+    /// Returns an ordered list of nodes (including intermediates) and edges.
+    pub fn find_join_paths(&self, node_ids: &[i64]) -> Result<JoinPath, String> {
+        if node_ids.is_empty() {
+            return Err("At least one node ID is required".to_string());
+        }
+
+        // Single table — no join needed
+        if node_ids.len() == 1 {
+            let node = self
+                .get_graph_node(node_ids[0])?
+                .ok_or_else(|| format!("Node {} not found", node_ids[0]))?;
+            return Ok(JoinPath {
+                nodes: vec![node],
+                edges: vec![],
+            });
+        }
+
+        // Hub = first node. BFS from hub to find all others.
+        let hub_id = node_ids[0];
+        let hub_node = self
+            .get_graph_node(hub_id)?
+            .ok_or_else(|| format!("Hub node {} not found", hub_id))?;
+
+        let traversal = self.graph_traverse(hub_id, Some(10), None)?;
+
+        // Collect paths to each requested target
+        let mut all_edges: Vec<GraphEdgeExpanded> = Vec::new();
+        let mut all_node_ids: HashSet<i64> = HashSet::new();
+        all_node_ids.insert(hub_id);
+
+        for &target_id in &node_ids[1..] {
+            // Verify target exists
+            let target_node = self
+                .get_graph_node(target_id)?
+                .ok_or_else(|| format!("Node {} not found", target_id))?;
+
+            // Find target in traversal results
+            let path = traversal
+                .reachable
+                .iter()
+                .find(|p| p.node.id == target_id)
+                .ok_or_else(|| {
+                    format!(
+                        "No path found between {}.{} and {}.{}",
+                        hub_node.connection_name, hub_node.table_name,
+                        target_node.connection_name, target_node.table_name,
+                    )
+                })?;
+
+            // Collect all nodes and edges from this path
+            for edge in &path.edges {
+                all_node_ids.insert(edge.source.id);
+                all_node_ids.insert(edge.target.id);
+            }
+            all_edges.extend(path.edges.clone());
+        }
+
+        // Deduplicate edges by ID
+        let mut seen_edge_ids: HashSet<i64> = HashSet::new();
+        let unique_edges: Vec<GraphEdgeExpanded> = all_edges
+            .into_iter()
+            .filter(|e| seen_edge_ids.insert(e.id))
+            .collect();
+
+        // Build ordered node list: hub first, then others by BFS depth
+        let mut ordered_nodes: Vec<GraphNode> = vec![hub_node];
+        // Sort remaining by their depth in the traversal (closest first)
+        let mut remaining: Vec<&TraversalPath> = traversal
+            .reachable
+            .iter()
+            .filter(|p| all_node_ids.contains(&p.node.id) && p.node.id != hub_id)
+            .collect();
+        remaining.sort_by_key(|p| p.depth);
+        for path in remaining {
+            ordered_nodes.push(path.node.clone());
+        }
+
+        Ok(JoinPath {
+            nodes: ordered_nodes,
+            edges: unique_edges,
+        })
+    }
+
+    // ========================================================================
     // FK Seeding
     // ========================================================================
 
@@ -1026,5 +1125,58 @@ mod tests {
         assert_eq!(deleted, 1);
         assert_eq!(db.list_graph_edges(None).unwrap().len(), 1);
         assert_eq!(db.list_graph_edges(None).unwrap()[0].edge_type, "derives_from");
+    }
+
+    #[test]
+    fn plan_linear_chain() {
+        // A -> B -> C, request A + C — B should be included as intermediate
+        let db = test_db();
+        let a = db.upsert_graph_node("conn", "db", "dbo", "A", "table", None).unwrap();
+        let b = db.upsert_graph_node("conn", "db", "dbo", "B", "table", None).unwrap();
+        let c = db.upsert_graph_node("conn", "db", "dbo", "C", "table", None).unwrap();
+        db.create_graph_edge(a, b, "join_key", Some("id"), Some("a_id"), None, None).unwrap();
+        db.create_graph_edge(b, c, "join_key", Some("id"), Some("b_id"), None, None).unwrap();
+
+        let plan = db.find_join_paths(&[a, c]).unwrap();
+        assert_eq!(plan.nodes.len(), 3); // A, B, C
+        assert_eq!(plan.edges.len(), 2);
+        assert_eq!(plan.nodes[0].table_name, "A"); // hub first
+    }
+
+    #[test]
+    fn plan_two_tables() {
+        // A -> B direct edge
+        let db = test_db();
+        let a = db.upsert_graph_node("conn", "db", "dbo", "A", "table", None).unwrap();
+        let b = db.upsert_graph_node("conn", "db", "dbo", "B", "table", None).unwrap();
+        db.create_graph_edge(a, b, "join_key", Some("id"), Some("a_id"), None, None).unwrap();
+
+        let plan = db.find_join_paths(&[a, b]).unwrap();
+        assert_eq!(plan.nodes.len(), 2);
+        assert_eq!(plan.edges.len(), 1);
+    }
+
+    #[test]
+    fn plan_unreachable() {
+        // A -> B, C isolated — requesting A + C should fail
+        let db = test_db();
+        let a = db.upsert_graph_node("conn", "db", "dbo", "A", "table", None).unwrap();
+        let _b = db.upsert_graph_node("conn", "db", "dbo", "B", "table", None).unwrap();
+        let c = db.upsert_graph_node("conn", "db", "dbo", "C", "table", None).unwrap();
+        db.create_graph_edge(a, _b, "join_key", None, None, None, None).unwrap();
+
+        let result = db.find_join_paths(&[a, c]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No path found"));
+    }
+
+    #[test]
+    fn plan_single_table() {
+        let db = test_db();
+        let a = db.upsert_graph_node("conn", "db", "dbo", "A", "table", None).unwrap();
+
+        let plan = db.find_join_paths(&[a]).unwrap();
+        assert_eq!(plan.nodes.len(), 1);
+        assert_eq!(plan.edges.len(), 0);
     }
 }

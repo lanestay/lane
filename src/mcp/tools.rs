@@ -319,6 +319,32 @@ pub struct GraphCreateEdgeParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphPlanTableParam {
+    #[schemars(description = "Connection name. Uses default if omitted.")]
+    pub connection: Option<String>,
+
+    #[schemars(description = "Database name")]
+    pub database: String,
+
+    #[schemars(description = "Schema name (defaults to empty)")]
+    pub schema: Option<String>,
+
+    #[schemars(description = "Table name")]
+    pub table: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphPlanParams {
+    #[schemars(
+        description = "Tables to include in the plan. Each entry needs at minimum: database and table. Connection defaults to the default connection if omitted."
+    )]
+    pub tables: Vec<GraphPlanTableParam>,
+
+    #[schemars(description = "Maximum rows to import per table. Omit for no limit.")]
+    pub row_limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListDatabasesParams {
     #[schemars(description = "Named connection to use. Uses default connection if omitted.")]
     pub connection: Option<String>,
@@ -2138,6 +2164,68 @@ impl BatchQueryMcp {
                 "target_columns": params.target_columns,
             })
             .to_string(),
+            Err(e) => json!({"error": true, "message": e}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Generate an execution plan for combining data from multiple tables across database connections. Uses the graph to find join paths between tables, describes columns, and produces workspace import queries plus a final JOIN query. Returns the plan as JSON — does not execute it. The agent should then execute each import step and the join query."
+    )]
+    async fn graph_plan(
+        &self,
+        Parameters(params): Parameters<GraphPlanParams>,
+    ) -> String {
+        tracing::info!(tool = "graph_plan", table_count = params.tables.len(), "Tool called");
+
+        let graph_db = match &self.graph_db {
+            Some(db) => db,
+            None => {
+                return json!({"error": true, "message": "Graph database is not available"})
+                    .to_string()
+            }
+        };
+
+        if params.tables.is_empty() {
+            return json!({"error": true, "message": "At least one table is required"}).to_string();
+        }
+
+        let default_conn = self.registry.default_name();
+
+        // Resolve each table to a node ID
+        let mut node_ids: Vec<i64> = Vec::new();
+        for t in &params.tables {
+            let conn = t.connection.as_deref().unwrap_or(&default_conn);
+            let schema = t.schema.as_deref().unwrap_or("");
+            match graph_db.find_graph_node(conn, &t.database, schema, &t.table) {
+                Ok(Some(node)) => node_ids.push(node.id),
+                Ok(None) => {
+                    return json!({
+                        "error": true,
+                        "message": format!("No graph node for {}/{}/{}.{}", conn, t.database, schema, t.table),
+                        "hint": "Seed the graph or create the node first"
+                    })
+                    .to_string()
+                }
+                Err(e) => return json!({"error": true, "message": e}).to_string(),
+            }
+        }
+
+        // Find join paths
+        let join_path = match graph_db.find_join_paths(&node_ids) {
+            Ok(p) => p,
+            Err(e) => {
+                return json!({
+                    "error": true,
+                    "message": e,
+                    "hint": "Ensure edges exist between the requested tables"
+                })
+                .to_string()
+            }
+        };
+
+        // Build the plan
+        match crate::api::graph::build_graph_plan(&self.registry, join_path, params.row_limit).await {
+            Ok(plan) => json!(plan).to_string(),
             Err(e) => json!({"error": true, "message": e}).to_string(),
         }
     }
