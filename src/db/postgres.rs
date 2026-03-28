@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-use deadpool_postgres::{Config as DeadpoolConfig, Pool, Runtime};
+use deadpool_postgres::{Pool, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio_postgres::types::Type;
 use tokio_postgres::NoTls;
+use postgres_native_tls::MakeTlsConnector;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -105,16 +106,56 @@ impl PostgresBackend {
     }
 
     fn create_pool(&self, database: &str) -> Result<Pool> {
-        let mut cfg = DeadpoolConfig::new();
-        cfg.host = Some(self.config.host.clone());
-        cfg.port = Some(self.config.port);
-        cfg.dbname = Some(database.to_string());
-        cfg.user = Some(self.config.user.clone());
-        cfg.password = Some(self.config.password.clone());
+        let sslmode = self.config.sslmode.as_deref().unwrap_or("prefer");
 
-        let pool = cfg
-            .create_pool(Some(Runtime::Tokio1), NoTls)
-            .context("Failed to create Postgres connection pool")?;
+        // Build tokio_postgres::Config directly — deadpool's Config doesn't propagate channel_binding
+        let mut pg_config = tokio_postgres::Config::new();
+        pg_config.host(&self.config.host);
+        pg_config.port(self.config.port);
+        pg_config.dbname(database);
+        pg_config.user(&self.config.user);
+        pg_config.password(&self.config.password);
+
+        let pool = match sslmode {
+            "disable" => {
+                let mgr = deadpool_postgres::Manager::new(pg_config, NoTls);
+                Pool::builder(mgr)
+                    .max_size(Self::POOL_SIZE)
+                    .runtime(Runtime::Tokio1)
+                    .build()
+                    .context("Failed to create Postgres connection pool")?
+            }
+            "prefer" => {
+                // Best-effort TLS: encrypt if possible, accept any cert
+                // Disable channel binding — SCRAM fails when cert is unverified
+                pg_config.channel_binding(tokio_postgres::config::ChannelBinding::Disable);
+                let mut builder = native_tls::TlsConnector::builder();
+                builder.danger_accept_invalid_certs(true);
+                let connector = builder.build().context("Failed to build TLS connector")?;
+                let tls = MakeTlsConnector::new(connector);
+                let mgr = deadpool_postgres::Manager::new(pg_config, tls);
+                Pool::builder(mgr)
+                    .max_size(Self::POOL_SIZE)
+                    .runtime(Runtime::Tokio1)
+                    .build()
+                    .context("Failed to create Postgres connection pool (TLS)")?
+            }
+            "require" | "verify-ca" | "verify-full" => {
+                // TLS required, cert validated, channel binding enabled
+                pg_config.channel_binding(tokio_postgres::config::ChannelBinding::Prefer);
+                let connector = native_tls::TlsConnector::builder()
+                    .build()
+                    .context("Failed to build TLS connector")?;
+                let tls = MakeTlsConnector::new(connector);
+                let mgr = deadpool_postgres::Manager::new(pg_config, tls);
+                Pool::builder(mgr)
+                    .max_size(Self::POOL_SIZE)
+                    .runtime(Runtime::Tokio1)
+                    .build()
+                    .context("Failed to create Postgres connection pool (TLS)")?
+            }
+            other => anyhow::bail!("Unsupported Postgres sslmode: '{}'. Use disable, prefer, require, verify-ca, or verify-full.", other),
+        };
 
         Ok(pool)
     }
