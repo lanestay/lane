@@ -351,11 +351,15 @@ function CreateConnectionDialog({ open, onClose, onCreated, onError }: {
               <Select value={sslmode || "none"} onValueChange={(v) => setSslmode(v === "none" ? "" : v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="prefer">Prefer</SelectItem>
-                  <SelectItem value="require">Require</SelectItem>
+                  <SelectItem value="none">Default (prefer)</SelectItem>
+                  <SelectItem value="disable">Disable — No TLS</SelectItem>
+                  <SelectItem value="prefer">Prefer — TLS, certificate not verified</SelectItem>
+                  <SelectItem value="require">Require — TLS, valid certificate required</SelectItem>
+                  <SelectItem value="verify-ca">Verify CA — TLS, certificate chain verified</SelectItem>
+                  <SelectItem value="verify-full">Verify Full — TLS, certificate and hostname verified</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">This app defaults to &quot;prefer&quot;: it uses TLS encryption but does not verify the server certificate. Use &quot;require&quot; or higher for production.</p>
             </div>
           )}
           {connType === "mssql" && (
@@ -514,11 +518,15 @@ function EditConnectionDialog({ connection, onClose, onSaved, onError }: {
               <Select value={sslmode || "none"} onValueChange={(v) => setSslmode(v === "none" ? "" : v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="prefer">Prefer</SelectItem>
-                  <SelectItem value="require">Require</SelectItem>
+                  <SelectItem value="none">Default (prefer)</SelectItem>
+                  <SelectItem value="disable">Disable — No TLS</SelectItem>
+                  <SelectItem value="prefer">Prefer — TLS, certificate not verified</SelectItem>
+                  <SelectItem value="require">Require — TLS, valid certificate required</SelectItem>
+                  <SelectItem value="verify-ca">Verify CA — TLS, certificate chain verified</SelectItem>
+                  <SelectItem value="verify-full">Verify Full — TLS, certificate and hostname verified</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">This app defaults to &quot;prefer&quot;: it uses TLS encryption but does not verify the server certificate. Use &quot;require&quot; or higher for production.</p>
             </div>
           )}
           {connType === "mssql" && (
