@@ -213,6 +213,11 @@ pub fn routes(state: Arc<AppState>) -> Router {
             get(crate::auth::admin::get_sa_connections_handler)
                 .post(crate::auth::admin::set_sa_connections_handler),
         )
+        .route(
+            "/api/lane/admin/service-account-endpoints",
+            get(crate::auth::admin::get_sa_endpoint_permissions_handler)
+                .post(crate::auth::admin::set_sa_endpoint_permissions_handler),
+        )
         // PII Rules (static routes before parameterized)
         .route(
             "/api/lane/admin/pii/rules/test",

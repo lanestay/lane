@@ -1941,6 +1941,50 @@ pub async fn set_sa_connections_handler(
     }
 }
 
+pub async fn get_sa_endpoint_permissions_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<SaPermQuery>,
+) -> Response {
+    if let Err(resp) = check_admin_auth(&headers, &state).await {
+        return resp;
+    }
+    let db = match require_access_db(&state) {
+        Ok(db) => db,
+        Err(resp) => return resp,
+    };
+
+    match db.get_sa_endpoint_permissions(&query.name) {
+        Ok(endpoints) => (StatusCode::OK, Json(json!({"endpoints": endpoints}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SetSaEndpointPermissionsRequest {
+    pub name: String,
+    pub endpoints: Vec<String>,
+}
+
+pub async fn set_sa_endpoint_permissions_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<SetSaEndpointPermissionsRequest>,
+) -> Response {
+    if let Err(resp) = check_admin_auth(&headers, &state).await {
+        return resp;
+    }
+    let db = match require_access_db(&state) {
+        Ok(db) => db,
+        Err(resp) => return resp,
+    };
+
+    match db.set_sa_endpoint_permissions(&body.name, &body.endpoints) {
+        Ok(()) => (StatusCode::OK, Json(json!({"success": true, "name": body.name}))).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))).into_response(),
+    }
+}
+
 // ============================================================================
 // Teams CRUD
 // ============================================================================

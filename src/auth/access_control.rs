@@ -4731,6 +4731,37 @@ impl AccessControlDb {
     }
 
 
+    pub fn get_sa_endpoint_permissions(&self, name: &str) -> Result<Vec<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let mut stmt = conn
+            .prepare("SELECT endpoint_name FROM sa_endpoint_permissions WHERE account_name = ?1")
+            .map_err(|e| format!("Query error: {}", e))?;
+        let names: Vec<String> = stmt
+            .query_map(params![name], |row| row.get(0))
+            .map_err(|e| format!("Query error: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(names)
+    }
+
+    pub fn set_sa_endpoint_permissions(&self, name: &str, endpoints: &[String]) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        conn.execute(
+            "DELETE FROM sa_endpoint_permissions WHERE account_name = ?1",
+            params![name],
+        )
+        .map_err(|e| format!("Delete error: {}", e))?;
+
+        for ep in endpoints {
+            conn.execute(
+                "INSERT INTO sa_endpoint_permissions (account_name, endpoint_name) VALUES (?1, ?2)",
+                params![name, ep],
+            )
+            .map_err(|e| format!("Insert error: {}", e))?;
+        }
+        Ok(())
+    }
+
     /// Check endpoint access for a service account. No rows = no access.
     pub fn check_sa_endpoint_access(&self, account_name: &str, endpoint_name: &str) -> bool {
         let conn = match self.conn.lock() {
