@@ -989,28 +989,50 @@ pub async fn query_handler(
     // Track read-only mode for database-level enforcement (Postgres READ ONLY transactions)
     let mut is_read_only = false;
 
-    // Service accounts: raw SQL is read-only. Writes must use the REST API
-    // where table-level permissions are properly enforced.
+    // Service accounts: SQL access is gated by sql_mode.
+    // Full mode bypasses the read-only check entirely — connection scoping and DB-level
+    // permissions are the enforcement boundary for trusted system identities.
+    // supervised/confirmed don't apply to machine clients — treat as read_only.
     if let AuthResult::ServiceAccountAccess { account_name } = &auth {
         if let Some(ref access_db) = state.access_db {
             let mode = access_db.get_sa_sql_mode(account_name);
-            if matches!(mode, SqlMode::None) {
-                return request_error(
-                    "FORBIDDEN",
-                    "Raw SQL access is disabled for this service account.",
-                    None,
-                )
-                .to_response(StatusCode::FORBIDDEN);
+            match mode {
+                SqlMode::None => {
+                    return request_error(
+                        "FORBIDDEN",
+                        "Raw SQL access is disabled for this service account.",
+                        None,
+                    )
+                    .to_response(StatusCode::FORBIDDEN);
+                }
+                SqlMode::ReadOnly => {
+                    if !crate::query::validation::is_read_only_safe(&payload.query) {
+                        return request_error(
+                            "FORBIDDEN",
+                            "Service accounts cannot write via raw SQL. Use the REST API (POST /api/data/{connection}/{database}/{table}) for write operations.",
+                            None,
+                        )
+                        .to_response(StatusCode::FORBIDDEN);
+                    }
+                    is_read_only = true;
+                }
+                SqlMode::Full => {
+                    // Fully trusted system client — connection scoping and DB permissions
+                    // are the enforcement boundary, not query-level restrictions.
+                }
+                _ => {
+                    // supervised/confirmed don't apply to machine clients — treat as read_only.
+                    if !crate::query::validation::is_read_only_safe(&payload.query) {
+                        return request_error(
+                            "FORBIDDEN",
+                            "Service accounts cannot write via raw SQL. Use the REST API (POST /api/data/{connection}/{database}/{table}) for write operations.",
+                            None,
+                        )
+                        .to_response(StatusCode::FORBIDDEN);
+                    }
+                    is_read_only = true;
+                }
             }
-            if !crate::query::validation::is_read_only_safe(&payload.query) {
-                return request_error(
-                    "FORBIDDEN",
-                    "Service accounts cannot write via raw SQL. Use the REST API (POST /api/data/{connection}/{database}/{table}) for write operations.",
-                    None,
-                )
-                .to_response(StatusCode::FORBIDDEN);
-            }
-            is_read_only = true;
         }
     }
 
@@ -1234,28 +1256,50 @@ pub async fn query_ai_handler(
 
     let mut is_read_only = false;
 
-    // Service accounts: raw SQL is read-only. Writes must use the REST API
-    // where table-level permissions are properly enforced.
+    // Service accounts: SQL access is gated by sql_mode.
+    // Full mode bypasses the read-only check entirely — connection scoping and DB-level
+    // permissions are the enforcement boundary for trusted system identities.
+    // supervised/confirmed don't apply to machine clients — treat as read_only.
     if let AuthResult::ServiceAccountAccess { account_name } = &auth {
         if let Some(ref access_db) = state.access_db {
             let mode = access_db.get_sa_sql_mode(account_name);
-            if matches!(mode, SqlMode::None) {
-                return request_error(
-                    "FORBIDDEN",
-                    "Raw SQL access is disabled for this service account.",
-                    None,
-                )
-                .to_response(StatusCode::FORBIDDEN);
+            match mode {
+                SqlMode::None => {
+                    return request_error(
+                        "FORBIDDEN",
+                        "Raw SQL access is disabled for this service account.",
+                        None,
+                    )
+                    .to_response(StatusCode::FORBIDDEN);
+                }
+                SqlMode::ReadOnly => {
+                    if !crate::query::validation::is_read_only_safe(&payload.query) {
+                        return request_error(
+                            "FORBIDDEN",
+                            "Service accounts cannot write via raw SQL. Use the REST API (POST /api/data/{connection}/{database}/{table}) for write operations.",
+                            None,
+                        )
+                        .to_response(StatusCode::FORBIDDEN);
+                    }
+                    is_read_only = true;
+                }
+                SqlMode::Full => {
+                    // Fully trusted system client — connection scoping and DB permissions
+                    // are the enforcement boundary, not query-level restrictions.
+                }
+                _ => {
+                    // supervised/confirmed don't apply to machine clients — treat as read_only.
+                    if !crate::query::validation::is_read_only_safe(&payload.query) {
+                        return request_error(
+                            "FORBIDDEN",
+                            "Service accounts cannot write via raw SQL. Use the REST API (POST /api/data/{connection}/{database}/{table}) for write operations.",
+                            None,
+                        )
+                        .to_response(StatusCode::FORBIDDEN);
+                    }
+                    is_read_only = true;
+                }
             }
-            if !crate::query::validation::is_read_only_safe(&payload.query) {
-                return request_error(
-                    "FORBIDDEN",
-                    "Service accounts cannot write via raw SQL. Use the REST API (POST /api/data/{connection}/{database}/{table}) for write operations.",
-                    None,
-                )
-                .to_response(StatusCode::FORBIDDEN);
-            }
-            is_read_only = true;
         }
     }
 

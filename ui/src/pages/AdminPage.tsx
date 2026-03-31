@@ -2989,8 +2989,6 @@ function CreateServiceAccountDialog({ open, onClose, onCreated, onError }: {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="full">Full</SelectItem>
-                <SelectItem value="confirmed">Confirmed</SelectItem>
-                <SelectItem value="supervised">Supervised</SelectItem>
                 <SelectItem value="read_only">Read Only</SelectItem>
                 <SelectItem value="none">None</SelectItem>
               </SelectContent>
@@ -3051,8 +3049,6 @@ function EditServiceAccountDialog({ account, onClose, onSaved, onError }: {
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="full">Full</SelectItem>
-                <SelectItem value="confirmed">Confirmed</SelectItem>
-                <SelectItem value="supervised">Supervised</SelectItem>
                 <SelectItem value="read_only">Read Only</SelectItem>
                 <SelectItem value="none">None</SelectItem>
               </SelectContent>
