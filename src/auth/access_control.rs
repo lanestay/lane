@@ -1751,6 +1751,17 @@ impl AccessControlDb {
         Ok(())
     }
 
+    /// Count the number of enabled admin users.
+    pub fn count_admins(&self) -> Result<i64, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND is_enabled = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Database error: {}", e))
+    }
+
     /// Delete a user (cascades to tokens and permissions).
     pub fn delete_user(&self, email: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -2366,11 +2377,18 @@ impl AccessControlDb {
     // ========================================================================
 
     pub fn needs_setup(&self) -> Result<bool, String> {
+        // Setup is only open when there are no persisted principals at all.
+        // If an admin ever wipes all users, service accounts still hold
+        // authority — allowing setup in that state would let an anonymous
+        // caller mint a new admin and receive the system API key.
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
-        let count: i64 = conn
+        let user_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
             .map_err(|e| format!("Database error: {}", e))?;
-        Ok(count == 0)
+        let account_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM service_accounts", [], |row| row.get(0))
+            .map_err(|e| format!("Database error: {}", e))?;
+        Ok(user_count == 0 && account_count == 0)
     }
 
     pub fn setup_admin(
@@ -5104,4 +5122,24 @@ mod tests {
         // After team deleted, lead can no longer approve member (no team relation)
         assert!(!db.can_approve("lead@example.com", "member@example.com"));
     }
+
+    #[test]
+    fn count_admins_returns_correct_counts() {
+        let db = test_db();
+        assert_eq!(db.count_admins().unwrap(), 0);
+
+        db.create_user("admin1@example.com", None, true).unwrap();
+        assert_eq!(db.count_admins().unwrap(), 1);
+
+        db.create_user("admin2@example.com", None, true).unwrap();
+        assert_eq!(db.count_admins().unwrap(), 2);
+
+        db.create_user("user@example.com", None, false).unwrap();
+        assert_eq!(db.count_admins().unwrap(), 2);
+
+        // Disabled admins don't count
+        db.update_user("admin2@example.com", None, None, Some(false), None, None, None, None).unwrap();
+        assert_eq!(db.count_admins().unwrap(), 1);
+    }
+
 }

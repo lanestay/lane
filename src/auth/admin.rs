@@ -398,6 +398,29 @@ pub async fn delete_user_handler(
         Err(resp) => return resp,
     };
 
+    if db.is_admin(&email) {
+        let admin_count = match db.count_admins() {
+            Ok(c) => c,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e})),
+                )
+                    .into_response()
+            }
+        };
+        if admin_count <= 1 {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "cannot delete the last admin; promote another admin first",
+                    "code": "LAST_ADMIN"
+                })),
+            )
+                .into_response();
+        }
+    }
+
     match db.delete_user(&email) {
         Ok(()) => (
             StatusCode::OK,
