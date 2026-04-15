@@ -10,7 +10,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "100.69.78.91:3401:3401"
+      - "${LANE_BIND:-127.0.0.1}:3401:3401"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
