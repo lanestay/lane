@@ -2,6 +2,8 @@
 
 Self-contained database platform — query engine, REST API, MCP server, and React admin console — shipped as a single Rust binary. One process, no external dependencies, deploys anywhere.
 
+> **Trust model:** lane is designed for trusted-network deployments — a tailnet, VPC, or equivalent. The "Quickest Start" below uses Tailscale; that's the recommended path. The auth, scoping, and audit features still apply if you expose lane on a public network, but network hardening is on you.
+
 ## What it does
 
 - **Query any database from one place** — connect SQL Server, PostgreSQL, and DuckDB by name. Run queries through the REST API, MCP server, or web UI.
