@@ -31,6 +31,9 @@ coverage/
 
 # Data directory (SQLCipher auth.db, cipher keys)
 data/
+*.db
+*.sqlite
+*.sqlite3
 
 # Security and sensitive files
 *.pem
