@@ -318,6 +318,31 @@ pub async fn update_user_handler(
         }
     }
 
+    let demoting = body.is_admin == Some(false);
+    let disabling = body.is_enabled == Some(false);
+    if (demoting || disabling) && db.is_admin(&email) {
+        let admin_count = match db.count_admins() {
+            Ok(c) => c,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e})),
+                )
+                    .into_response()
+            }
+        };
+        if admin_count <= 1 {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "cannot demote or disable the last admin; promote another admin first",
+                    "code": "LAST_ADMIN"
+                })),
+            )
+                .into_response();
+        }
+    }
+
     match db.update_user(
         &email,
         body.display_name.as_deref(),
