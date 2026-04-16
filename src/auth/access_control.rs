@@ -2377,10 +2377,14 @@ impl AccessControlDb {
     // ========================================================================
 
     pub fn needs_setup(&self) -> Result<bool, String> {
-        // Setup is only open when there are no persisted principals at all.
-        // If an admin ever wipes all users, service accounts still hold
-        // authority — allowing setup in that state would let an anonymous
-        // caller mint a new admin and receive the system API key.
+        // Setup is only open when there are no persisted principals at all AND
+        // the one-time setup flag has never been set. The flag is sticky: once
+        // the first admin is created it stays set, so wiping every user and
+        // service account later cannot re-open this path for an anonymous
+        // caller to mint a new admin.
+        if self.get_config("setup_completed")?.as_deref() == Some("1") {
+            return Ok(false);
+        }
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
         let user_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
@@ -2422,6 +2426,9 @@ impl AccessControlDb {
 
         // Hash and store password
         self.set_password(email, password)?;
+
+        // Mark setup sticky so future wipes can't re-open bootstrap.
+        self.set_config("setup_completed", "1")?;
 
         Ok(())
     }
